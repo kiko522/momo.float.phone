@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, createContext, type CSSProperties, type ReactNode } from "react";
-import { Activity, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X, CloudUpload } from "lucide-react";
+import { Activity, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, Link2, Loader2, Lock, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X, CloudUpload } from "lucide-react";
 import { ConfirmDialog } from "./ui/modal";
 import { useAccount } from "@/lib/account-context";
 import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
@@ -21,6 +21,7 @@ import { CloudServicesPage } from "./settings/cloud-services-setup";
 import { ToolboxSettings } from "./settings/toolbox-settings";
 import { ModerationCenter } from "./settings/moderation-center";
 import { AgentComputerSettings } from "./settings/agent-computer-settings";
+import { LockScreenSettings } from "./settings/lock-screen-settings";
 import { fetchIsAdmin } from "@/lib/moderation-client";
 import { PageShell } from "./ui/page-shell";
 import { CardGrid, FeaturedCard, type CardItem, type FeaturedCardItem } from "./ui/card-grid";
@@ -57,6 +58,7 @@ type SubPage =
     | "toolbox"
     | "agentComputer"
     | "moderation"
+    | "lockScreen"
     | "about";
 
 const SETTINGS_MENU = [
@@ -73,6 +75,7 @@ const SETTINGS_MENU = [
     { id: "toolbox", icon: Wrench, label: "聊天工具箱", desc: "外部工具调用", iconColor: BINDING_ACCENTS.voice , glass: "toolbox" },
     { id: "agentComputer", icon: Laptop, label: "角色电脑", desc: "云端小电脑（自部署）", iconColor: BINDING_ACCENTS.memory , glass: "agent-computer" },
     { id: "identity", icon: UserCircle, label: "用户身份", desc: "个人信息", iconColor: BINDING_ACCENTS.identity , glass: "identity" },
+    { id: "lockScreen", icon: Lock, label: "锁屏", desc: "4 位 PIN 解锁", iconColor: BINDING_ACCENTS.identity , glass: "" },
     { id: "about", icon: Info, label: "关于与声明", desc: "版本与协议", iconColor: BINDING_ACCENTS.memory , glass: "about" },
 ] as const;
 
@@ -326,6 +329,8 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                 return <ModerationCenter onNotice={onNotice} />;
             case "identity":
                 return <UserIdentitySettings />;
+            case "lockScreen":
+                return <LockScreenSettings onNotice={onNotice} />;
             case "about":
                 return <AboutDeclaration />;
             default:
@@ -515,7 +520,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                         <CardGrid
                             label="User"
                             labelClassName="settings-menu-section-title"
-                            items={SETTINGS_MENU.filter(item => ["identity", "about"].includes(item.id)).map(makeCardItem)}
+                            items={SETTINGS_MENU.filter(item => ["identity", "lockScreen", "about"].includes(item.id)).map(makeCardItem)}
                         />
                         {floatingDockSheetOpen && (
                             <div className="modal-overlay modal-overlay-bottom" data-ui="modal" onClick={() => setFloatingDockSheetOpen(false)}>

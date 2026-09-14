@@ -144,6 +144,8 @@ import { sendBrowserNotification } from "@/lib/browser-notification";
 import type { ChatSharePayload } from "@/lib/chat-share";
 import { completePendingMcpOAuthCallback } from "@/lib/tool-executor";
 import { LayoutGrid, LoaderCircle, RefreshCw } from "lucide-react";
+import { LockScreen } from "@/components/lock-screen";
+import { loadLockScreenConfig, markSessionUnlocked, shouldShowLockScreen } from "@/lib/lock-screen-storage";
 
 const EMOJI_FONTS = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla"';
 
@@ -1059,6 +1061,20 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   const [desktopReady, setDesktopReady] = useState(false);
   const [glassPaintPass, setGlassPaintPass] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  // 锁屏：初始按「已启用且本会话未解锁」判断，关闭标签页/浏览器后 sessionStorage 清空，重新进入即锁定。
+  const [locked, setLocked] = useState<boolean>(() => shouldShowLockScreen());
+  const handleLockScreenUnlock = useCallback(() => {
+    markSessionUnlocked();
+    setLocked(false);
+  }, []);
+  useEffect(() => {
+    const onConfigChange = () => {
+      const cfg = loadLockScreenConfig();
+      if (!cfg.enabled) setLocked(false);
+    };
+    window.addEventListener("lock-screen-config-changed", onConfigChange);
+    return () => window.removeEventListener("lock-screen-config-changed", onConfigChange);
+  }, []);
   const [activeApp, setActiveApp] = useState<DesktopIconId | null>(null);
   const [customApps, setCustomApps] = useState<InstalledCustomApp[]>([]);
   // 自定义 APP 桌面图标样式偏好（global = 忽略上传图标走全局效果）
@@ -1471,6 +1487,8 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   ]);
   useEffect(() => {
     hydrateKvDb().then(() => {
+      // 水合完成后重新评估锁屏状态：初始渲染时 kv 可能尚未就绪，避免刷新后锁屏漏显。
+      setLocked(shouldShowLockScreen());
       const stored = readThemeProfile();
       setSavedTheme(stored);
       setDraftTheme(stored);
@@ -5043,6 +5061,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                   clone keeps theme variables + glass effect selectors
                   (.phone-shell[data-icon-effect] etc.); follows pointer via ref */}
               <div ref={ghostRef} className="drag-ghost" />
+
+              {/* 锁屏遮罩：置于 .phone-shell 内最后，盖住桌面与所有应用层 */}
+              {locked && <LockScreen onUnlock={handleLockScreenUnlock} />}
             </div>
           </div>
         </div>
