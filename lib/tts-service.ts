@@ -43,6 +43,10 @@ export async function synthesizeSpeech(
         return synthesizeOpenAI(text, voiceConfig);
     }
 
+    if (provider === "ElevenLabs") {
+        return synthesizeElevenLabs(text, voiceConfig);
+    }
+
     return null;
 }
 
@@ -171,6 +175,43 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig): Promise<B
     if (!response.ok) {
         const errText = await response.text().catch(() => "");
         throw new Error(`OpenAI TTS 请求失败 (${response.status}): ${errText}`);
+    }
+
+    const blob = await response.blob();
+    return new Blob([await blob.arrayBuffer()], { type: "audio/mpeg" });
+}
+
+// ── ElevenLabs TTS ──────────────────────────────────
+
+const ELEVENLABS_DEFAULT_BASE_URL = "https://api.elevenlabs.io";
+const ELEVENLABS_DEFAULT_TTS_MODEL = "eleven_multilingual_v2";
+
+async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promise<Blob | null> {
+    if (!config.apiKey) throw new Error("ElevenLabs API Key 未配置");
+    const voiceId = config.defaultVoice?.trim();
+    if (!voiceId) throw new Error("ElevenLabs 音色 (Voice ID) 未配置");
+    const baseUrl = (config.baseUrl || ELEVENLABS_DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
+    const modelId = config.model?.trim() || ELEVENLABS_DEFAULT_TTS_MODEL;
+
+    const response = await fetchWithTimeout(
+        `${baseUrl}/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
+        {
+            method: "POST",
+            headers: {
+                "xi-api-key": config.apiKey,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                text,
+                model_id: modelId,
+                voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+            }),
+        },
+    );
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`ElevenLabs TTS 请求失败 (${response.status}): ${errText.slice(0, 300)}`);
     }
 
     const blob = await response.blob();

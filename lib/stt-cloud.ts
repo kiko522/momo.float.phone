@@ -10,25 +10,43 @@ import { loadBindingConfig, loadVoiceConfigs, resolveBinding } from "./settings-
 import type { VoiceApiConfig } from "./settings-types";
 
 export type CloudSttConfig = {
+    provider: "OpenAI" | "ElevenLabs";
     baseUrl: string;
     apiKey: string;
     model: string;
 };
 
 const DEFAULT_STT_MODEL = "whisper-1";
+const ELEVENLABS_DEFAULT_BASE_URL = "https://api.elevenlabs.io";
+const ELEVENLABS_DEFAULT_STT_MODEL = "scribe_v1";
 const TRANSCRIBE_TIMEOUT_MS = 60_000;
 // 录音兜底上限：忘记松手/指针事件丢失时自动停，避免无限占用麦克风
 const MAX_RECORDING_MS = 60_000;
 
 function toCloudSttConfig(config: VoiceApiConfig | undefined | null): CloudSttConfig | null {
-    if (!config || config.provider !== "OpenAI") return null;
+    if (!config) return null;
     if (!config.apiKey?.trim()) return null;
     if (config.enableSTT === false) return null;
-    return {
-        baseUrl: (config.baseUrl || "https://api.openai.com/v1").trim().replace(/\/+$/, ""),
-        apiKey: config.apiKey.trim(),
-        model: config.sttModel?.trim() || DEFAULT_STT_MODEL,
-    };
+
+    if (config.provider === "OpenAI") {
+        return {
+            provider: "OpenAI",
+            baseUrl: (config.baseUrl || "https://api.openai.com/v1").trim().replace(/\/+$/, ""),
+            apiKey: config.apiKey.trim(),
+            model: config.sttModel?.trim() || DEFAULT_STT_MODEL,
+        };
+    }
+
+    if (config.provider === "ElevenLabs") {
+        return {
+            provider: "ElevenLabs",
+            baseUrl: (config.baseUrl || ELEVENLABS_DEFAULT_BASE_URL).trim().replace(/\/+$/, ""),
+            apiKey: config.apiKey.trim(),
+            model: config.sttModel?.trim() || ELEVENLABS_DEFAULT_STT_MODEL,
+        };
+    }
+
+    return null;
 }
 
 /**
@@ -132,25 +150,44 @@ export async function startCallRecording(): Promise<ActiveCallRecording> {
     };
 }
 
-/** 调 OpenAI 兼容 /audio/transcriptions 把录音转文字。 */
-export async function transcribeAudioBlob(blob: Blob, config: CloudSttConfig): Promise<string> {
+function resolveRecordingExt(blob: Blob): string {
     const type = (blob.type || "").toLowerCase();
-    const ext = type.includes("mp4") ? "mp4"
+    return type.includes("mp4") ? "mp4"
         : type.includes("ogg") ? "ogg"
         : type.includes("wav") ? "wav"
         : "webm";
-    const form = new FormData();
-    form.set("model", config.model);
-    form.set("file", blob, `speech.${ext}`);
+}
 
+function withTranscribeTimeout<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
-    try {
+    return run(controller.signal).catch(e => {
+        if (e instanceof DOMException && e.name === "AbortError") {
+            throw new Error(`语音识别超时（超过 ${Math.round(TRANSCRIBE_TIMEOUT_MS / 1000)} 秒无响应）`);
+        }
+        throw e;
+    }).finally(() => clearTimeout(timer));
+}
+
+/** 调 OpenAI 兼容 /audio/transcriptions 把录音转文字。 */
+export async function transcribeAudioBlob(blob: Blob, config: CloudSttConfig): Promise<string> {
+    if (config.provider === "ElevenLabs") {
+        return transcribeElevenLabs(blob, config);
+    }
+    return transcribeOpenAI(blob, config);
+}
+
+async function transcribeOpenAI(blob: Blob, config: CloudSttConfig): Promise<string> {
+    const form = new FormData();
+    form.set("model", config.model);
+    form.set("file", blob, `speech.${resolveRecordingExt(blob)}`);
+
+    return withTranscribeTimeout(async signal => {
         const res = await fetch(`${config.baseUrl}/audio/transcriptions`, {
             method: "POST",
             headers: { Authorization: `Bearer ${config.apiKey}` },
             body: form,
-            signal: controller.signal,
+            signal,
         });
         if (!res.ok) {
             const text = await res.text().catch(() => "");
@@ -163,12 +200,27 @@ export async function transcribeAudioBlob(blob: Blob, config: CloudSttConfig): P
         }
         // response_format=text 风格的中转直接回纯文本
         return (await res.text()).trim();
-    } catch (e) {
-        if (e instanceof DOMException && e.name === "AbortError") {
-            throw new Error(`语音识别超时（超过 ${Math.round(TRANSCRIBE_TIMEOUT_MS / 1000)} 秒无响应）`);
+    });
+}
+
+/** ElevenLabs Scribe：multipart 上传录音，返回 JSON { text }。 */
+async function transcribeElevenLabs(blob: Blob, config: CloudSttConfig): Promise<string> {
+    const form = new FormData();
+    form.set("model_id", config.model);
+    form.set("file", blob, `speech.${resolveRecordingExt(blob)}`);
+
+    return withTranscribeTimeout(async signal => {
+        const res = await fetch(`${config.baseUrl}/v1/speech-to-text`, {
+            method: "POST",
+            headers: { "xi-api-key": config.apiKey },
+            body: form,
+            signal,
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(`ElevenLabs 语音识别错误 ${res.status}: ${text.slice(0, 200)}`);
         }
-        throw e;
-    } finally {
-        clearTimeout(timer);
-    }
+        const data = await res.json().catch(() => ({})) as { text?: unknown };
+        return typeof data.text === "string" ? data.text.trim() : "";
+    });
 }
