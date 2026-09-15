@@ -17,6 +17,7 @@ import {
 import MusicCommentsPage from "./music-comments";
 import MusicArtistPage from "./music-artist";
 import { loadMusicBg, playerBgStyle, MUSIC_BG_EVENT, type MusicBgConfig } from "@/lib/music-bg";
+import { getCoListenStats, formatCoListenDuration, MUSIC_CO_LISTEN_EVENT, type CoListenStats } from "@/lib/music-co-listen";
 
 const PLAY_MODE_ICONS: Record<PlayMode, { svg: string; label: string }> = {
     sequence: {
@@ -71,11 +72,19 @@ export default function MusicPlayer() {
     const [palette, setPalette] = useState<CoverPalette>(DEFAULT_COVER_PALETTE);
     const [bgCfg, setBgCfg] = useState<MusicBgConfig>(() => loadMusicBg());
     const [commentTotal, setCommentTotal] = useState(0);
+    const [coListen, setCoListen] = useState<CoListenStats>(() => getCoListenStats());
 
     useEffect(() => {
         const handleBgChange = () => setBgCfg(loadMusicBg());
         window.addEventListener(MUSIC_BG_EVENT, handleBgChange);
         return () => window.removeEventListener(MUSIC_BG_EVENT, handleBgChange);
+    }, []);
+
+    useEffect(() => {
+        const refresh = () => setCoListen(getCoListenStats());
+        refresh();
+        window.addEventListener(MUSIC_CO_LISTEN_EVENT, refresh);
+        return () => window.removeEventListener(MUSIC_CO_LISTEN_EVENT, refresh);
     }, []);
 
     // kv cache hydrates asynchronously from IndexedDB — the initial read above
@@ -458,6 +467,10 @@ export default function MusicPlayer() {
                         {track.artist || "未知歌手"}
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 5 7 7-7 7" /></svg>
                     </button>
+                    <div className="mp-colisten" title="累计一起听时长">
+                        <span className="mp-colisten-dot" {...(player.isPlaying ? { "data-live": "" } : {})} />
+                        一起听 · {formatCoListenDuration(coListen.todaySeconds)}
+                    </div>
                 </div>
                 <div className="mp-top-actions">
                     <button className="music-player-ctrl-btn mp-top-btn" onClick={togglePlayerStyle} title={playerStyle === "vinyl" ? "切换现代样式" : "切换黑胶样式"}>

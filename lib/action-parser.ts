@@ -20,6 +20,7 @@ import { sendBrowserNotification } from "./browser-notification";
 import type { MomentPost, MomentComment } from "./moments-types";
 import { attachMomentPhotoInBackground, parseMomentPostResponse } from "./moments-engine";
 import { isAbortError, throwIfAborted } from "./abort-utils";
+import { getMusicControlBridge } from "./music-control-bridge";
 
 // ── Types ──
 
@@ -40,7 +41,7 @@ export type ActionContext = {
 
 // ── Parser ──
 
-const ACTION_TAGS = ["朋友圈", "群消息", "评论", "回复", "消息", "私信"] as const;
+const ACTION_TAGS = ["朋友圈", "群消息", "评论", "回复", "消息", "私信", "音乐"] as const;
 
 function normalizeActionQuotes(text: string): string {
     return text.replace(/[\u201C\u201D\u2018\u2019\u300C\u300D]/g, "\"");
@@ -178,7 +179,7 @@ export function parseActionTags(text: string): {
  */
 const KNOWN_ACTION_TAGS = [
     // 中文方括号格式
-    "朋友圈", "评论", "回复", "消息", "群消息", "私信",
+    "朋友圈", "评论", "回复", "消息", "群消息", "私信", "音乐",
     // XML 格式 (AI 偶尔幻觉输出)
     "action_chat_message", "action_moments_post",
     "action_comment", "action_reply",
@@ -246,6 +247,9 @@ export async function dispatchActions(
                     break;
                 case "群消息":
                     await dispatchGroupChatMessage(action, effectiveCtx);
+                    break;
+                case "音乐":
+                    await dispatchMusicAction(action, effectiveCtx);
                     break;
             }
         } catch (err) {
@@ -453,6 +457,57 @@ async function dispatchGroupChatMessage(action: ActionTag, context: ActionContex
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("followup-fired", { detail: { sessionId: groupSession.id } }));
     }
+}
+
+/**
+ * 角色音乐动作：角色在回复中输出 [音乐]...[/音乐] 控制播放器。
+ * 支持：
+ *   [音乐]下一首[/音乐] / [音乐]上一首[/音乐] / [音乐]暂停[/音乐] / [音乐]继续[/音乐]
+ *   [音乐]播放 晴天 周杰伦[/音乐] / [音乐]推荐 一首治愈的歌[/音乐]（后者等价于点歌播放）
+ */
+async function dispatchMusicAction(action: ActionTag, context: ActionContext): Promise<void> {
+    void context;
+    const bridge = getMusicControlBridge();
+    if (!bridge) {
+        console.warn("[ActionParser] SKIP 音乐 action: music control bridge not available");
+        return;
+    }
+
+    const cmd = action.content.trim();
+    if (!cmd) return;
+
+    if (/^(下一首|下一曲|切歌|换一首)$/.test(cmd)) {
+        bridge.next();
+        console.log("[ActionParser] music: next");
+        return;
+    }
+    if (/^(上一首|上一曲)$/.test(cmd)) {
+        bridge.prev();
+        console.log("[ActionParser] music: prev");
+        return;
+    }
+    if (/^(暂停|停一下|先停)$/.test(cmd)) {
+        bridge.pause();
+        console.log("[ActionParser] music: pause");
+        return;
+    }
+    if (/^(继续|接着放|恢复播放)$/.test(cmd)) {
+        bridge.resume();
+        console.log("[ActionParser] music: resume");
+        return;
+    }
+
+    // 其余按「点歌 / 播放 / 推荐」处理：去掉前缀动词后作为搜索词
+    const query = cmd
+        .replace(/^(播放|点歌|切到|切一首|推荐|放一首|来一首|听一首|想听)[:：\s]*/, "")
+        .trim();
+    if (!query) {
+        bridge.resume();
+        return;
+    }
+
+    const result = await bridge.playByQuery(query);
+    console.log(`[ActionParser] music: playByQuery("${query}") ->`, result);
 }
 
 // ── Content Matching Helpers ──

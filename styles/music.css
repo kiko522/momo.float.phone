@@ -3113,6 +3113,39 @@
     opacity: 0.7;
 }
 
+/* 「一起听」共听时长标签 */
+.mp-colisten {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 6px;
+    font-size: calc(10.8px*var(--app-text-scale,1));
+    color: var(--c-music-accent);
+    opacity: 0.85;
+    font-variant-numeric: tabular-nums;
+}
+
+.mp-colisten-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--c-music-accent);
+    opacity: 0.45;
+    flex-shrink: 0;
+}
+
+.mp-colisten-dot[data-live] {
+    background: #ff5468;
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(255, 84, 104, 0.9);
+    animation: mp-colisten-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes mp-colisten-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.35); }
+}
+
 .mp-top-actions {
     display: flex;
     gap: 2px;

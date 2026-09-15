@@ -7,6 +7,7 @@ import { getAudioBlob, markTrackPlayed } from "./music-storage";
 import { findPlayableMatch, getNeteaseLyrics, getNeteasePlayUrl, getNeteasePlayInfo, getNeteaseSongDetail } from "./music-service";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { registerMusicControlBridge } from "./music-control-bridge";
+import { addCoListenSeconds } from "./music-co-listen";
 
 // ── Types ──
 
@@ -110,6 +111,13 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         persistQueue(queue);
     }, [queue]);
+
+    // 「一起听」计时：播放中每秒累计 1 秒。暂停/切歌/停止都会置 isPlaying=false，自然停表。
+    useEffect(() => {
+        if (!isPlaying) return;
+        const timer = window.setInterval(() => addCoListenSeconds(1), 1000);
+        return () => window.clearInterval(timer);
+    }, [isPlaying]);
 
     /** Wrapped setQueue with max size enforcement */
     const setQueue = useCallback((tracks: MusicTrack[]) => {

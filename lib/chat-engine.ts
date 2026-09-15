@@ -70,6 +70,7 @@ import type { ToolCall, ToolResult } from "./tool-executor";
 import { getCustomStickerNames, getCustomStickerExample } from "./custom-sticker-storage";
 import { formatCustomAppChatDirectivesForPrompt } from "./custom-app-chat-directives";
 import { loadAllTracks } from "./music-storage";
+import { getMusicControlBridge } from "./music-control-bridge";
 import { getActiveAppTags } from "./content-tag-utils";
 import { isNeteaseConfigured, getUserPlaylists, getPlaylistTracks, checkLoginStatus, loadMusicApiConfig } from "./music-service";
 import { buildCalendarScheduleMarker, getCurrentCalendarScheduleForPrompt } from "./calendar-storage";
@@ -1774,6 +1775,35 @@ export function nativeChatToolCallToTextCall(call: LlmToolCall, bundle: NativeCh
  * Shared prompt builder — used by both generateChatCompletion and previewPromptPayload.
  * Single source of truth for chat prompt assembly.
  */
+/** 将 LRC 歌词解析为纯文本（去时间戳、元数据与连续重复行），用于注入给角色阅读。 */
+function lyricsToPlainText(lrc: string): string {
+    if (!lrc) return "";
+    const NL = String.fromCharCode(10);
+    const out: string[] = [];
+    for (const raw of lrc.split(NL)) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (line.startsWith("[ti:") || line.startsWith("[ar:") || line.startsWith("[al:") || line.startsWith("[by:")) continue;
+        let text = line;
+        // 逐个移除 [mm:ss.xx] 这类时间戳标记
+        for (;;) {
+            const a = text.indexOf("[");
+            if (a < 0) break;
+            const b = text.indexOf("]", a);
+            if (b < 0) break;
+            if (/^[0-9:. ]+$/.test(text.slice(a + 1, b))) {
+                text = text.slice(0, a) + text.slice(b + 1);
+            } else {
+                break;
+            }
+        }
+        text = text.trim();
+        if (!text) continue;
+        if (out[out.length - 1] !== text) out.push(text);
+    }
+    return out.join(NL);
+}
+
 export async function buildChatPromptMessages(
     session: ChatSession,
     history: ChatMessage[],
@@ -1948,6 +1978,33 @@ export async function buildChatPromptMessages(
         offlineSummaryTag: preset?.story_summary_tag?.trim() || "summary",
         nativeToolHistory: usesNativeActions,
     });
+
+    // 音乐协作：告知角色可用 [音乐] 标签控制播放器（始终注入，本地/在线音乐通用）。
+    llmMessages.push({
+        role: "system",
+        content: [
+            "你可以用 [音乐]...[/音乐] 标签控制播放器（标签不会展示给用户）：",
+            "[音乐]播放 歌名 歌手[/音乐] = 点歌或推荐并播放；",
+            "[音乐]下一首[/音乐]、[音乐]上一首[/音乐]、[音乐]暂停[/音乐]、[音乐]继续[/音乐]。",
+            "想和用户一起听歌、推荐歌曲或切歌时，可以边说话边输出对应标签。",
+        ].join(String.fromCharCode(10)),
+    });
+
+    // 「一起听」上下文：注入当前播放歌曲 + 完整歌词，让角色能结合歌词举一反三。
+    const nowPlayingTrack = getMusicControlBridge()?.getState()?.currentTrack ?? null;
+    if (nowPlayingTrack) {
+        const nowLyrics = lyricsToPlainText(nowPlayingTrack.lyrics || "");
+        const nowPlayingLines = [
+            "[当前共听歌曲]",
+            `《${nowPlayingTrack.title}》 - ${nowPlayingTrack.artist || "未知歌手"}`,
+        ];
+        if (nowLyrics) {
+            nowPlayingLines.push(`歌词：${String.fromCharCode(10)}${nowLyrics.slice(0, 1200)}`);
+        }
+        nowPlayingLines.push("你们正在一起听这首歌。你可以结合歌词、歌名、歌手，聊聊它和你们的关系、感受或回忆；也可以顺势用 [音乐] 动作切歌、点歌或推荐。");
+        llmMessages.push({ role: "system", content: nowPlayingLines.join(String.fromCharCode(10)) });
+    }
+
     const avatarChangeIntent = !session.isGroup
         ? findUserAvatarChangeIntent(historyForPrompt, session.id, character.id)
         : null;
