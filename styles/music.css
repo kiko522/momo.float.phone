@@ -1989,6 +1989,38 @@
     color: var(--c-music-accent);
 }
 
+/* ── 角色音乐账号（小号）绑定 ── */
+.music-char-account {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--c-music-surface);
+    border: 1px solid var(--c-music-surface-solid);
+}
+
+.music-char-account-name {
+    flex: 1;
+    min-width: 0;
+    font-size: calc(11.7px*var(--app-text-scale,1));
+    color: var(--c-music-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.music-char-account .music-settings-btn {
+    flex: 0 0 auto;
+    height: 30px;
+    padding: 0 12px;
+    font-size: calc(10.8px*var(--app-text-scale,1));
+}
+
+.music-char-account .music-qr-badge {
+    flex: 0 0 auto;
+}
+
 /* ── Header actions (settings gear + close) ── */
 
 .music-header-actions {

@@ -7,6 +7,7 @@ import {
     isDefaultNeteaseApiBase,
     normalizeMusicApiBaseUrl,
 } from "./music-api-defaults";
+import { loadCharacterMusicAccount } from "./music-account";
 
 // ── Netease API Config ──
 
@@ -72,9 +73,22 @@ export function clearNeteaseCookie(): void {
     try { kvRemove(NETEASE_COOKIE_KEY); } catch { /* ignore */ }
 }
 
+/**
+ * 解析某个请求应使用的网易云登录态：
+ * - 传了 characterId 且该角色绑定了小号 → 用角色小号 cookie；
+ * - 否则回退到全局（用户主账号）cookie。
+ */
+function resolveCookie(characterId?: string): string {
+    if (characterId) {
+        const acc = loadCharacterMusicAccount(characterId);
+        if (acc?.cookie) return acc.cookie;
+    }
+    return loadNeteaseCookie();
+}
+
 /** Append saved cookie and mainland realIP to a Netease API URL as query parameters. */
-function withNeteaseParams(url: string): string {
-    const cookie = loadNeteaseCookie();
+function withNeteaseParams(url: string, characterId?: string): string {
+    const cookie = resolveCookie(characterId);
     try {
         const parsed = new URL(url);
         if (!parsed.searchParams.has("realIP")) parsed.searchParams.set("realIP", NETEASE_REAL_IP);
@@ -333,10 +347,10 @@ export async function checkQrStatus(baseUrl: string, key: string): Promise<{ cod
 }
 
 /** Check current login status */
-export async function checkLoginStatus(baseUrl: string): Promise<{ loggedIn: boolean; nickname?: string }> {
+export async function checkLoginStatus(baseUrl: string, characterId?: string): Promise<{ loggedIn: boolean; nickname?: string }> {
     try {
         const url = resolveNeteaseRequestBase(baseUrl);
-        const resp = await fetch(withNeteaseParams(`${url}/login/status?timestamp=${Date.now()}`));
+        const resp = await fetch(withNeteaseParams(`${url}/login/status?timestamp=${Date.now()}`, characterId));
         const data = await resp.json();
         const profile = data?.data?.profile;
         if (profile?.nickname) return { loggedIn: true, nickname: profile.nickname };
@@ -358,24 +372,24 @@ export type NeteasePlaylist = {
 };
 
 /** Get current logged-in user's uid */
-async function getLoginUid(): Promise<number | null> {
+async function getLoginUid(characterId?: string): Promise<number | null> {
     const base = neteaseBase();
     if (!base) return null;
     try {
-        const resp = await fetch(withNeteaseParams(`${base}/login/status?timestamp=${Date.now()}`));
+        const resp = await fetch(withNeteaseParams(`${base}/login/status?timestamp=${Date.now()}`, characterId));
         const data = await resp.json();
         return data?.data?.profile?.userId || null;
     } catch { return null; }
 }
 
 /** Fetch user's playlists */
-export async function getUserPlaylists(): Promise<NeteasePlaylist[]> {
+export async function getUserPlaylists(characterId?: string): Promise<NeteasePlaylist[]> {
     const base = neteaseBase();
     if (!base) return [];
-    const uid = await getLoginUid();
+    const uid = await getLoginUid(characterId);
     if (!uid) return [];
     try {
-        const resp = await fetch(withNeteaseParams(`${base}/user/playlist?uid=${uid}&timestamp=${Date.now()}`));
+        const resp = await fetch(withNeteaseParams(`${base}/user/playlist?uid=${uid}&timestamp=${Date.now()}`, characterId));
         const data = await resp.json();
         return (data?.playlist || []).map((p: any) => ({
             id: p.id,
@@ -391,11 +405,11 @@ export async function getUserPlaylists(): Promise<NeteasePlaylist[]> {
 }
 
 /** Fetch tracks in a playlist */
-export async function getPlaylistTracks(playlistId: number): Promise<NeteaseSearchResult[]> {
+export async function getPlaylistTracks(playlistId: number, characterId?: string): Promise<NeteaseSearchResult[]> {
     const base = neteaseBase();
     if (!base) return [];
     try {
-        const resp = await fetch(withNeteaseParams(`${base}/playlist/track/all?id=${playlistId}&timestamp=${Date.now()}`));
+        const resp = await fetch(withNeteaseParams(`${base}/playlist/track/all?id=${playlistId}&timestamp=${Date.now()}`, characterId));
         const data = await resp.json();
         return (data?.songs || []).map(mapSongToSearchResult);
     } catch { return []; }
@@ -737,11 +751,11 @@ export function getTrackPlaylistId(trackId: number): number | null {
 }
 
 /** Add tracks to a Netease playlist */
-export async function addTracksToPlaylist(playlistId: number, trackIds: number[]): Promise<{ ok: boolean; message: string }> {
+export async function addTracksToPlaylist(playlistId: number, trackIds: number[], characterId?: string): Promise<{ ok: boolean; message: string }> {
     const base = neteaseBase();
     if (!base) return { ok: false, message: "API 未配置" };
     try {
-        const resp = await fetch(withNeteaseParams(`${base}/playlist/tracks?op=add&pid=${playlistId}&tracks=${trackIds.join(",")}&timestamp=${Date.now()}`));
+        const resp = await fetch(withNeteaseParams(`${base}/playlist/tracks?op=add&pid=${playlistId}&tracks=${trackIds.join(",")}&timestamp=${Date.now()}`, characterId));
         const data = await resp.json();
         if (data?.body?.code === 200 || data?.status === 200 || data?.code === 200) {
             return { ok: true, message: "已添加到歌单" };
@@ -752,6 +766,24 @@ export async function addTracksToPlaylist(playlistId: number, trackIds: number[]
         return { ok: false, message: data?.body?.message || data?.message || "添加失败" };
     } catch (e) {
         return { ok: false, message: e instanceof Error ? e.message : "添加失败" };
+    }
+}
+
+/** Create a new playlist on the Netease account (requires login cookie). */
+export async function createNeteasePlaylist(name: string, characterId?: string): Promise<{ ok: boolean; message: string; playlistId?: number }> {
+    const base = neteaseBase();
+    if (!base) return { ok: false, message: "API 未配置" };
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false, message: "歌单名不能为空" };
+    try {
+        const resp = await fetch(withNeteaseParams(`${base}/playlist/create?name=${encodeURIComponent(trimmed)}&timestamp=${Date.now()}`, characterId));
+        const data = await resp.json();
+        if (data?.code === 200 && data?.id) {
+            return { ok: true, message: `已创建歌单「${trimmed}」`, playlistId: data.id };
+        }
+        return { ok: false, message: data?.message || data?.msg || "创建歌单失败" };
+    } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : "创建歌单失败" };
     }
 }
 

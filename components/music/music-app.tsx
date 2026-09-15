@@ -25,6 +25,15 @@ import {
     type NeteaseDjRadio, type NeteaseDjProgram, type NeteaseAlbumSub, type NeteaseUserEvent,
 } from "@/lib/music-service";
 import { clearMusicCloudSyncData } from "@/lib/chat-engine";
+import { loadCharacters } from "@/lib/character-storage";
+import type { Character } from "@/lib/character-types";
+import {
+    loadAllCharacterMusicAccounts,
+    saveCharacterMusicAccount,
+    clearCharacterMusicAccount,
+    MUSIC_CHARACTER_ACCOUNTS_EVENT,
+    type CharacterMusicAccount,
+} from "@/lib/music-account";
 import MusicCommentsPage from "./music-comments";
 import {
     loadMusicBg, saveMusicBg, clearMusicBg, fileToCompressedDataUrl, appBgStyle,
@@ -1737,6 +1746,9 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
                     </div>
                 )}
 
+                {/* 角色音乐小号绑定 */}
+                {config.baseUrl.trim() && <CharacterMusicAccounts baseUrl={config.baseUrl.trim()} />}
+
                 {/* Custom backgrounds: app pages + player page */}
                 <div className="music-settings-section music-qr-section">
                     <div className="music-settings-label">App 页面背景</div>
@@ -1843,6 +1855,109 @@ function MusicSettingsTab({ onBack, onSaved }: { onBack: () => void; onSaved: ()
                     {bgMsg && <div className="music-qr-status">{bgMsg}</div>}
                 </div>
             </div>
+        </div>
+    );
+}
+
+/* ── 角色音乐账号（小号）绑定 ── */
+function CharacterMusicAccounts({ baseUrl }: { baseUrl: string }) {
+    const [characters, setCharacters] = useState<Character[]>([]);
+    const [accounts, setAccounts] = useState<Record<string, CharacterMusicAccount>>({});
+    const [bindingId, setBindingId] = useState<string | null>(null);
+    const [qrImg, setQrImg] = useState<string | null>(null);
+    const [qrStatus, setQrStatus] = useState<string>("");
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    const refresh = useCallback(() => {
+        setCharacters(loadCharacters());
+        const map: Record<string, CharacterMusicAccount> = {};
+        for (const acc of loadAllCharacterMusicAccounts()) map[acc.characterId] = acc;
+        setAccounts(map);
+    }, []);
+
+    useEffect(() => {
+        refresh();
+        window.addEventListener(MUSIC_CHARACTER_ACCOUNTS_EVENT, refresh);
+        return () => window.removeEventListener(MUSIC_CHARACTER_ACCOUNTS_EVENT, refresh);
+    }, [refresh]);
+
+    useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+
+    const startBind = async (characterId: string) => {
+        if (!baseUrl) return;
+        setBindingId(characterId);
+        setQrImg(null);
+        setQrStatus("获取二维码...");
+        if (pollRef.current) clearInterval(pollRef.current);
+
+        const key = await getQrKey(baseUrl);
+        if (!key) { setQrStatus("获取二维码失败"); return; }
+
+        const img = await getQrImage(baseUrl, key);
+        if (!img) { setQrStatus("生成二维码失败"); return; }
+        setQrImg(img);
+        setQrStatus("请用该角色的小号扫码登录");
+
+        pollRef.current = setInterval(async () => {
+            const res = await checkQrStatus(baseUrl, key);
+            if (res.code === 803) {
+                if (res.cookie) saveCharacterMusicAccount(characterId, res.cookie, res.nickname || "已绑定");
+                if (pollRef.current) clearInterval(pollRef.current);
+                setBindingId(null);
+                setQrImg(null);
+                setQrStatus("");
+                refresh();
+            } else if (res.code === 802) {
+                setQrStatus("已扫码，请在手机上确认");
+            } else if (res.code === 800) {
+                if (pollRef.current) clearInterval(pollRef.current);
+                setBindingId(null);
+                setQrImg(null);
+                setQrStatus("二维码已过期，请重新获取");
+            }
+        }, 2000);
+    };
+
+    const unbind = (characterId: string) => {
+        clearCharacterMusicAccount(characterId);
+        refresh();
+    };
+
+    return (
+        <div className="music-settings-section music-qr-section">
+            <div className="music-settings-label">角色音乐账号（小号）</div>
+            <div className="music-settings-hint">给角色绑定独立网易云账号后，角色可以自己建歌单、把歌收藏到自己的账号</div>
+
+            {characters.length === 0 ? (
+                <div className="music-settings-hint">还没有创建角色，先去「角色」App 创建一个</div>
+            ) : (
+                characters.map(ch => {
+                    const acc = accounts[ch.id];
+                    const isBinding = bindingId === ch.id;
+                    return (
+                        <div key={ch.id} className="music-char-account">
+                            <span className="music-char-account-name">{ch.name}</span>
+                            {acc ? (
+                                <>
+                                    <span className="music-qr-badge">{acc.nickname}</span>
+                                    <button className="music-settings-btn" onClick={() => unbind(ch.id)}>解绑</button>
+                                </>
+                            ) : isBinding ? (
+                                <span className="music-qr-status">{qrStatus}</span>
+                            ) : (
+                                <button className="music-settings-btn" onClick={() => startBind(ch.id)}>绑定小号</button>
+                            )}
+                        </div>
+                    );
+                })
+            )}
+
+            {bindingId && qrImg && (
+                <div className="music-qr-wrap">
+                    <img src={qrImg} alt="角色小号登录二维码" className="music-qr-img" />
+                </div>
+            )}
+            {bindingId && qrStatus && !qrImg && <div className="music-qr-status">{qrStatus}</div>}
         </div>
     );
 }

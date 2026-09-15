@@ -21,6 +21,7 @@ import type { MomentPost, MomentComment } from "./moments-types";
 import { attachMomentPhotoInBackground, parseMomentPostResponse } from "./moments-engine";
 import { isAbortError, throwIfAborted } from "./abort-utils";
 import { getMusicControlBridge } from "./music-control-bridge";
+import { createNeteasePlaylist, getUserPlaylists, addTracksToPlaylist } from "./music-service";
 
 // ── Types ──
 
@@ -464,9 +465,11 @@ async function dispatchGroupChatMessage(action: ActionTag, context: ActionContex
  * 支持：
  *   [音乐]下一首[/音乐] / [音乐]上一首[/音乐] / [音乐]暂停[/音乐] / [音乐]继续[/音乐]
  *   [音乐]播放 晴天 周杰伦[/音乐] / [音乐]推荐 一首治愈的歌[/音乐]（后者等价于点歌播放）
+ *   [音乐]创建歌单 名字[/音乐] / [音乐]收藏这首歌[/音乐] / [音乐]收藏到 歌单名[/音乐]
+ * 建歌单 / 收藏会用角色绑定的小号账号（未绑定时回退到用户主账号）。
  */
 async function dispatchMusicAction(action: ActionTag, context: ActionContext): Promise<void> {
-    void context;
+    const characterId = context.characterId;
     const bridge = getMusicControlBridge();
     if (!bridge) {
         console.warn("[ActionParser] SKIP 音乐 action: music control bridge not available");
@@ -497,6 +500,29 @@ async function dispatchMusicAction(action: ActionTag, context: ActionContext): P
         return;
     }
 
+    // 创建歌单（用角色小号）
+    const createMatch = /^(创建歌单|新建歌单|建一个歌单)[:：\s]*(\S.*)$/.exec(cmd);
+    if (createMatch) {
+        const name = createMatch[2].trim();
+        if (!name) return;
+        const result = await createNeteasePlaylist(name, characterId);
+        console.log(`[ActionParser] music: createPlaylist("${name}") ->`, result);
+        return;
+    }
+
+    // 收藏当前歌曲到「喜欢的音乐」歌单（用角色小号）
+    if (/^(收藏这首歌|收藏当前歌曲|把这首歌加入歌单|加到我的歌单|加入我的歌单|收藏)$/.test(cmd)) {
+        await collectCurrentTrackToLikePlaylist(characterId);
+        return;
+    }
+
+    // 收藏当前歌曲到指定歌单
+    const collectToMatch = /^(收藏到|加到歌单|加入歌单)[:：\s]*["“]?(.+?)["”]?$/.exec(cmd);
+    if (collectToMatch) {
+        await collectCurrentTrackToPlaylist(collectToMatch[2].trim(), characterId);
+        return;
+    }
+
     // 其余按「点歌 / 播放 / 推荐」处理：去掉前缀动词后作为搜索词
     const query = cmd
         .replace(/^(播放|点歌|切到|切一首|推荐|放一首|来一首|听一首|想听)[:：\s]*/, "")
@@ -508,6 +534,51 @@ async function dispatchMusicAction(action: ActionTag, context: ActionContext): P
 
     const result = await bridge.playByQuery(query);
     console.log(`[ActionParser] music: playByQuery("${query}") ->`, result);
+}
+
+/** 收藏当前播放的网易云歌曲到「喜欢的音乐」歌单（角色小号优先）。 */
+async function collectCurrentTrackToLikePlaylist(characterId: string): Promise<void> {
+    const bridge = getMusicControlBridge();
+    const track = bridge?.getState()?.currentTrack ?? null;
+    if (!track || !track.id.startsWith("netease_")) {
+        console.warn("[ActionParser] 收藏失败：当前没有正在播放的网易云歌曲");
+        return;
+    }
+    const trackId = parseInt(track.id.replace("netease_", ""), 10);
+    if (!trackId) return;
+
+    const playlists = await getUserPlaylists(characterId);
+    const like = playlists.find(p => p.specialType === 5)
+        ?? playlists.find(p => p.name.includes("喜欢的音乐"));
+    if (!like) {
+        console.warn("[ActionParser] 收藏失败：找不到「喜欢的音乐」歌单");
+        return;
+    }
+    const result = await addTracksToPlaylist(like.id, [trackId], characterId);
+    console.log(`[ActionParser] music: collect "${track.title}" -> playlist ${like.name}`, result);
+}
+
+/** 收藏当前播放的网易云歌曲到指定名字的歌单（角色小号优先）。 */
+async function collectCurrentTrackToPlaylist(playlistName: string, characterId: string): Promise<void> {
+    if (!playlistName) return;
+    const bridge = getMusicControlBridge();
+    const track = bridge?.getState()?.currentTrack ?? null;
+    if (!track || !track.id.startsWith("netease_")) {
+        console.warn("[ActionParser] 收藏失败：当前没有正在播放的网易云歌曲");
+        return;
+    }
+    const trackId = parseInt(track.id.replace("netease_", ""), 10);
+    if (!trackId) return;
+
+    const playlists = await getUserPlaylists(characterId);
+    const target = playlists.find(p => p.name === playlistName)
+        ?? playlists.find(p => p.name.includes(playlistName));
+    if (!target) {
+        console.warn(`[ActionParser] 收藏失败：找不到歌单「${playlistName}」`);
+        return;
+    }
+    const result = await addTracksToPlaylist(target.id, [trackId], characterId);
+    console.log(`[ActionParser] music: collect "${track.title}" -> playlist ${target.name}`, result);
 }
 
 // ── Content Matching Helpers ──
