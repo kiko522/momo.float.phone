@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Lock } from "lucide-react";
 import { loadLockScreenConfig, isValidPin } from "@/lib/lock-screen-storage";
+import { getThemeAssetMap } from "@/lib/theme-storage";
 
 type LockScreenProps = {
   onUnlock: () => void;
@@ -20,7 +21,22 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
   const [now, setNow] = useState(() => new Date());
   const [pin, setPin] = useState("");
   const [error, setError] = useState(false);
+  const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const assetId = loadLockScreenConfig().backgroundAssetId;
+    if (!assetId) return;
+    getThemeAssetMap([assetId])
+      .then((map) => {
+        if (!cancelled) setBackgroundUrl(map[assetId] ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setBackgroundUrl(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -59,6 +75,13 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
       aria-label="锁屏"
       onClick={() => inputRef.current?.focus()}
     >
+      {backgroundUrl && (
+        <div
+          className="lock-screen-bg"
+          style={{ backgroundImage: `url("${backgroundUrl}")` }}
+          aria-hidden
+        />
+      )}
       <div className="lock-screen-clock">{formatClock(now)}</div>
       <div className="lock-screen-date">{formatDate(now)}</div>
 

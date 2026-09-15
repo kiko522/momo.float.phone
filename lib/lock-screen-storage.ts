@@ -13,9 +13,11 @@ const UNLOCKED_FLAG = "ai_phone_lock_unlocked";
 export type LockScreenConfig = {
   enabled: boolean;
   pin: string | null;
+  /** 锁屏背景图资产 ID（存于主题资源库）；null = 使用默认深色渐变背景。 */
+  backgroundAssetId: string | null;
 };
 
-const DEFAULT_CONFIG: LockScreenConfig = { enabled: false, pin: null };
+const DEFAULT_CONFIG: LockScreenConfig = { enabled: false, pin: null, backgroundAssetId: null };
 
 export function isValidPin(pin: unknown): pin is string {
   return typeof pin === "string" && /^\d{4}$/.test(pin);
@@ -29,6 +31,7 @@ function normalize(raw: unknown): LockScreenConfig {
       // 没有有效 PIN 时不允许开启，避免锁死后无法解锁。
       enabled: obj.enabled === true && pin !== null,
       pin,
+      backgroundAssetId: typeof obj.backgroundAssetId === "string" ? obj.backgroundAssetId : null,
     };
   }
   return { ...DEFAULT_CONFIG };

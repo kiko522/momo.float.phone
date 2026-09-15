@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { Lock, Check, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Lock, Check, X, Image as ImageIcon, Upload, Trash2 } from "lucide-react";
 import { loadLockScreenConfig, saveLockScreenConfig, isValidPin } from "@/lib/lock-screen-storage";
+import { saveThemeAssetFromBlob, deleteThemeAsset, getThemeAssetMap, describeAssetSaveError } from "@/lib/theme-storage";
 import { Toggle, Input } from "@/components/ui/form";
 
 type LockScreenSettingsProps = {
@@ -17,8 +18,28 @@ export function LockScreenSettings({ onNotice }: LockScreenSettingsProps) {
   const [pinConfirm, setPinConfirm] = useState("");
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState("");
+  const [backgroundId, setBackgroundId] = useState<string | null>(initial.backgroundAssetId);
+  const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
+  const [backgroundBusy, setBackgroundBusy] = useState(false);
+  const backgroundFileRef = useRef<HTMLInputElement | null>(null);
 
   const hasSavedPin = isValidPin(savedPin);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!backgroundId) {
+      setBackgroundUrl(null);
+      return;
+    }
+    getThemeAssetMap([backgroundId])
+      .then((map) => {
+        if (!cancelled) setBackgroundUrl(map[backgroundId] ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setBackgroundUrl(null);
+      });
+    return () => { cancelled = true; };
+  }, [backgroundId]);
 
   const commitPin = () => {
     if (!isValidPin(pinInput)) {
@@ -29,7 +50,7 @@ export function LockScreenSettings({ onNotice }: LockScreenSettingsProps) {
       setError("两次输入的 PIN 不一致。");
       return;
     }
-    saveLockScreenConfig({ enabled: true, pin: pinInput });
+    saveLockScreenConfig({ enabled: true, pin: pinInput, backgroundAssetId: backgroundId });
     setSavedPin(pinInput);
     setEnabled(true);
     setEditing(false);
@@ -42,7 +63,7 @@ export function LockScreenSettings({ onNotice }: LockScreenSettingsProps) {
   const handleToggle = (next: boolean) => {
     if (next) {
       if (hasSavedPin) {
-        saveLockScreenConfig({ enabled: true, pin: savedPin });
+        saveLockScreenConfig({ enabled: true, pin: savedPin, backgroundAssetId: backgroundId });
         setEnabled(true);
         setError("");
         onNotice("已开启锁屏");
@@ -52,7 +73,7 @@ export function LockScreenSettings({ onNotice }: LockScreenSettingsProps) {
         setError("");
       }
     } else {
-      saveLockScreenConfig({ enabled: false, pin: savedPin });
+      saveLockScreenConfig({ enabled: false, pin: savedPin, backgroundAssetId: backgroundId });
       setEnabled(false);
       setError("");
       onNotice("已关闭锁屏");
@@ -64,6 +85,45 @@ export function LockScreenSettings({ onNotice }: LockScreenSettingsProps) {
     setPinInput("");
     setPinConfirm("");
     setError("");
+  };
+
+  const handleUploadBackground = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setBackgroundBusy(true);
+    try {
+      const assetId = await saveThemeAssetFromBlob(file, "wallpaper");
+      if (backgroundId) {
+        try { await deleteThemeAsset(backgroundId); } catch { /* 忽略清理失败 */ }
+      }
+      const config = loadLockScreenConfig();
+      saveLockScreenConfig({ ...config, backgroundAssetId: assetId });
+      setBackgroundId(assetId);
+      const map = await getThemeAssetMap([assetId]);
+      setBackgroundUrl(map[assetId] ?? null);
+      onNotice("锁屏背景已更新");
+    } catch (err) {
+      onNotice(describeAssetSaveError(err));
+    } finally {
+      setBackgroundBusy(false);
+    }
+  };
+
+  const handleClearBackground = async () => {
+    setBackgroundBusy(true);
+    try {
+      if (backgroundId) {
+        try { await deleteThemeAsset(backgroundId); } catch { /* 忽略清理失败 */ }
+      }
+      const config = loadLockScreenConfig();
+      saveLockScreenConfig({ ...config, backgroundAssetId: null });
+      setBackgroundId(null);
+      setBackgroundUrl(null);
+      onNotice("已恢复默认锁屏背景");
+    } finally {
+      setBackgroundBusy(false);
+    }
   };
 
   return (
@@ -147,6 +207,51 @@ export function LockScreenSettings({ onNotice }: LockScreenSettingsProps) {
           )}
         </div>
       )}
+
+      {/* 锁屏背景 */}
+      <div className="ui-group-card flex flex-col gap-3">
+        <div className="flex items-center gap-[6px]">
+          <ImageIcon size={16} strokeWidth={1.75} />
+          <span className="menu-label">锁屏背景</span>
+        </div>
+
+        {backgroundUrl ? (
+          <div className="relative overflow-hidden rounded-xl border border-[var(--c-card-border)]">
+            <img src={backgroundUrl} alt="锁屏背景预览" className="block h-36 w-full object-cover" />
+            <button
+              type="button"
+              className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/60 px-3 py-1.5 ts-11 font-medium text-white backdrop-blur transition active:scale-95"
+              onClick={handleClearBackground}
+              disabled={backgroundBusy}
+            >
+              <Trash2 size={13} /> 恢复默认
+            </button>
+          </div>
+        ) : (
+          <p className="menu-desc !mt-0 !whitespace-normal">未设置背景，锁屏使用默认深色渐变。</p>
+        )}
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="ui-btn ui-btn-outline flex items-center gap-1"
+            onClick={() => backgroundFileRef.current?.click()}
+            disabled={backgroundBusy}
+          >
+            <Upload size={15} /> {backgroundUrl ? "更换图片" : "上传图片"}
+          </button>
+        </div>
+        <input
+          ref={backgroundFileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleUploadBackground}
+        />
+        <p className="menu-desc !mt-0 !whitespace-normal">
+          上传的图片会作为锁屏背景显示在时钟与 PIN 输入区后面，与桌面壁纸相互独立。
+        </p>
+      </div>
 
       {/* 说明 */}
       <div className="ui-group-card flex flex-col gap-2">

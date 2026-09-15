@@ -23,6 +23,30 @@
   text-align: center;
 }
 
+/* 锁屏背景图：铺满并盖在默认渐变上，再叠加半透明遮罩保证文字可读 */
+.lock-screen-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.lock-screen-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 10, 16, 0.48);
+}
+
+.lock-screen-clock,
+.lock-screen-date,
+.lock-screen-pin-wrap {
+  position: relative;
+  z-index: 1;
+}
+
 .lock-screen-clock {
   font-size: 72px;
   font-weight: 600;
