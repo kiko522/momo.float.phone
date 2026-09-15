@@ -1,8 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
+import { useState, useEffect, useCallback, useLayoutEffect, useRef, useMemo } from "react";
 import { getAllPosts, deleteMomentPost, getUnreadMomentsNotifications, saveMomentsLastSeen, addMomentComment } from "@/lib/moments-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
+import {
+    loadCharacterWorldGroups,
+    getCurrentWorldId,
+    CHARACTER_WORLDS_UPDATED_EVENT,
+    CURRENT_WORLD_CHANGED_EVENT,
+    DEFAULT_CHARACTER_WORLD_ID,
+    type CharacterWorldGroup,
+} from "@/lib/character-world-storage";
 import { resolveUserIdentity, USER_IDENTITIES_UPDATED_EVENT } from "@/lib/settings-storage";
 import { saveChatImageToIndexedDB, getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import type { MomentComment, MomentPost } from "@/lib/moments-types";
@@ -51,6 +59,24 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
     const coverInputRef = useRef<HTMLInputElement>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const [userIdentity, setUserIdentity] = useState(() => resolveUserIdentity());
+    // 按世界分区：朋友圈 feed 只显示当前世界角色的动态（用户自己的动态始终显示）
+    const [worldGroups, setWorldGroups] = useState<CharacterWorldGroup[]>(() => loadCharacterWorldGroups());
+    const [currentWorldId, setCurrentWorldId] = useState<string>(() => getCurrentWorldId());
+    useEffect(() => {
+        const reloadGroups = () => setWorldGroups(loadCharacterWorldGroups());
+        const reloadCurrent = () => setCurrentWorldId(getCurrentWorldId());
+        window.addEventListener(CHARACTER_WORLDS_UPDATED_EVENT, reloadGroups);
+        window.addEventListener(CURRENT_WORLD_CHANGED_EVENT, reloadCurrent);
+        return () => {
+            window.removeEventListener(CHARACTER_WORLDS_UPDATED_EVENT, reloadGroups);
+            window.removeEventListener(CURRENT_WORLD_CHANGED_EVENT, reloadCurrent);
+        };
+    }, []);
+    const safeWorldId = worldGroups.some(g => g.id === currentWorldId) ? currentWorldId : DEFAULT_CHARACTER_WORLD_ID;
+    const currentWorldMemberIds = useMemo(
+        () => new Set(worldGroups.find(g => g.id === safeWorldId)?.memberIds ?? []),
+        [worldGroups, safeWorldId]
+    );
     const [signature, setSignature] = useState(() => {
         if (typeof window !== "undefined") {
             return kvGet("moments_signature") || "make every day count (●ˇ∀ˇ●)";
@@ -106,9 +132,19 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
 
     const refreshPosts = useCallback(() => {
         const contactIds = new Set(loadChatContacts().map(c => c.characterId));
-        setPosts(getAllPosts().filter(p => p.authorType === "user" || contactIds.has(p.authorId)));
-        setUnreadNotifs(getUnreadMomentsNotifications());
-    }, []);
+        setPosts(getAllPosts().filter(p => {
+            if (p.authorType === "user") return true;
+            if (!contactIds.has(p.authorId)) return false;
+            // 多世界时：只显示当前世界角色的动态
+            if (worldGroups.length > 1 && !currentWorldMemberIds.has(p.authorId)) return false;
+            return true;
+        }));
+        setUnreadNotifs(getUnreadMomentsNotifications().filter(n => {
+            // 多世界时：只显示当前世界角色发来的提醒
+            if (worldGroups.length <= 1) return true;
+            return currentWorldMemberIds.has(n.authorId);
+        }));
+    }, [worldGroups, currentWorldMemberIds]);
 
     const captureScrollAnchor = useCallback((): MomentScrollAnchorSnapshot | null => {
         const el = getScrollElement();

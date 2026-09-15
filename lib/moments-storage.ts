@@ -403,11 +403,11 @@ export function saveMomentsLastSeen(): void {
 }
 
 /** Get all comments/replies targeting the user that are newer than lastSeen. */
-export function getUnreadMomentsNotifications(): { authorName: string; content: string; type: "comment" | "reply" | "like"; createdAt: string }[] {
+export function getUnreadMomentsNotifications(): { authorName: string; authorId: string; content: string; type: "comment" | "reply" | "like"; createdAt: string }[] {
     const lastSeen = loadMomentsLastSeen();
     const posts = loadMomentPosts();
     const userPostIds = new Set(posts.filter(p => p.authorType === "user").map(p => p.id));
-    const results: { authorName: string; content: string; type: "comment" | "reply" | "like"; createdAt: string }[] = [];
+    const results: { authorName: string; authorId: string; content: string; type: "comment" | "reply" | "like"; createdAt: string }[] = [];
 
     const chars = loadCharacters();
     const resolveAuthorName = (c: { authorType: string; authorId: string; authorName?: string }) => {
@@ -423,7 +423,7 @@ export function getUnreadMomentsNotifications(): { authorName: string; content: 
                 if (like.authorType === "user") continue;
                 const ts = new Date(like.createdAt).getTime();
                 if (ts <= lastSeen) continue;
-                results.push({ authorName: resolveAuthorName(like), content: "", type: "like", createdAt: like.createdAt });
+                results.push({ authorName: resolveAuthorName(like), authorId: like.authorId, content: "", type: "like", createdAt: like.createdAt });
             }
         }
 
@@ -438,11 +438,11 @@ export function getUnreadMomentsNotifications(): { authorName: string; content: 
 
             // Comment on user's post
             if (userPostIds.has(post.id) && !c.replyToAuthorId) {
-                results.push({ authorName: name, content: c.content, type: "comment", createdAt: c.createdAt });
+                results.push({ authorName: name, authorId: c.authorId, content: c.content, type: "comment", createdAt: c.createdAt });
             }
             // Reply to user's comment
             if (c.replyToAuthorType === "user") {
-                results.push({ authorName: name, content: c.content, type: "reply", createdAt: c.createdAt });
+                results.push({ authorName: name, authorId: c.authorId, content: c.content, type: "reply", createdAt: c.createdAt });
             }
         }
     }

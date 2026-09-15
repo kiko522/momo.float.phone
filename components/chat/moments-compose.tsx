@@ -3,6 +3,11 @@
 import { useEffect, useState, useRef } from "react";
 import { loadCharacters } from "@/lib/character-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
+import {
+    loadCharacterWorldGroups,
+    getCurrentWorldId,
+    DEFAULT_CHARACTER_WORLD_ID,
+} from "@/lib/character-world-storage";
 import { addMomentPost } from "@/lib/moments-storage";
 import { onUserPost } from "@/lib/moments-engine";
 import { resolveUserIdentity } from "@/lib/settings-storage";
@@ -15,6 +20,13 @@ type Props = {
 };
 
 export function MomentsCompose({ onClose, onPublished }: Props) {
+    // 按世界分区：发朋友圈时「提醒谁看」「谁可以看」只列出当前世界的角色
+    const [worldGroups] = useState(() => loadCharacterWorldGroups());
+    const [currentWorldId] = useState(() => getCurrentWorldId());
+    const safeWorldId = worldGroups.some(g => g.id === currentWorldId) ? currentWorldId : DEFAULT_CHARACTER_WORLD_ID;
+    const worldFilterActive = worldGroups.length > 1;
+    const currentWorldMemberIds = new Set(worldGroups.find(g => g.id === safeWorldId)?.memberIds ?? []);
+
     const [text, setText] = useState("");
     const [photoAssetId, setPhotoAssetId] = useState<string | null>(null);
     const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -33,6 +45,7 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
         const chars = loadCharacters();
         const map: Record<string, boolean> = {};
         contacts.forEach(c => {
+            if (worldFilterActive && !currentWorldMemberIds.has(c.characterId)) return;
             const char = chars.find(ch => ch.id === c.characterId);
             if (char) map[c.characterId] = true;
         });
@@ -47,7 +60,7 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
 
     const enrichedContacts = contacts
         .map(c => ({ ...c, char: chars.find(ch => ch.id === c.characterId) }))
-        .filter(c => c.char);
+        .filter(c => c.char && (!worldFilterActive || currentWorldMemberIds.has(c.characterId)));
 
     const visibleCount = Object.values(visibility).filter(Boolean).length;
     const isAllSelected = enrichedContacts.length > 0 && enrichedContacts.every(c => visibility[c.characterId]);
