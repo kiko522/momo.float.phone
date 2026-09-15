@@ -35,6 +35,7 @@ const VOICE_PROVIDER_OPTIONS = [
 
 const ELEVENLABS_DEFAULT_BASE_URL = "https://api.elevenlabs.io";
 const DEFAULT_ELEVENLABS_MODELS = [
+    { id: "eleven_v3", name: "eleven_v3 (新一代 · 多语言)" },
     { id: "eleven_multilingual_v2", name: "eleven_multilingual_v2 (多语言)" },
     { id: "eleven_turbo_v2_5", name: "eleven_turbo_v2_5 (快速多语言)" },
     { id: "eleven_flash_v2_5", name: "eleven_flash_v2_5 (极速多语言)" },
