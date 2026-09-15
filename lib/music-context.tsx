@@ -7,7 +7,11 @@ import { getAudioBlob, markTrackPlayed } from "./music-storage";
 import { findPlayableMatch, getNeteaseLyrics, getNeteasePlayUrl, getNeteasePlayInfo, getNeteaseSongDetail } from "./music-service";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { registerMusicControlBridge } from "./music-control-bridge";
-import { addCoListenSeconds } from "./music-co-listen";
+import {
+    addCoListenSecond,
+    resolveCoListenTarget,
+    setCoListenTarget as setCoListenTargetStore,
+} from "./music-co-listen";
 
 // ── Types ──
 
@@ -23,6 +27,8 @@ export type MusicState = {
     volume: number;
     showFullPlayer: boolean;
     floatDismissed: boolean;
+    /** 当前共听角色（实际生效值；null 表示未归属任何角色） */
+    coListenTargetId: string | null;
 };
 
 export type MusicActions = {
@@ -42,6 +48,8 @@ export type MusicActions = {
     dismissFloat: () => void;
     openFullPlayer: () => void;
     closeFullPlayer: () => void;
+    /** 切换共听角色；传 null 表示「跟随最近聊天」。 */
+    setCoListenTarget: (characterId: string | null) => void;
 };
 
 type MusicContextValue = MusicState & MusicActions;
@@ -106,22 +114,30 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     const [volume, setVolumeState] = useState(0.8);
     const [showFullPlayer, setShowFullPlayer] = useState(false);
     const [floatDismissed, setFloatDismissed] = useState(false);
+    const [coListenTargetId, setCoListenTargetIdState] = useState<string | null>(() => resolveCoListenTarget());
 
     // Persist queue on change.
     useEffect(() => {
         persistQueue(queue);
     }, [queue]);
 
-    // 「一起听」计时：播放中每秒累计 1 秒。暂停/切歌/停止都会置 isPlaying=false，自然停表。
+    // 「一起听」计时：播放中每秒累计 1 秒（记到当前共听角色 + 全局总计）。
+    // 暂停/切歌/停止都会置 isPlaying=false，自然停表。
     useEffect(() => {
         if (!isPlaying) return;
-        const timer = window.setInterval(() => addCoListenSeconds(1), 1000);
+        const timer = window.setInterval(() => addCoListenSecond(), 1000);
         return () => window.clearInterval(timer);
     }, [isPlaying]);
 
     /** Wrapped setQueue with max size enforcement */
     const setQueue = useCallback((tracks: MusicTrack[]) => {
         setQueueRaw(tracks.slice(0, QUEUE_MAX_SIZE));
+    }, []);
+
+    /** 切换共听角色；null = 跟随最近聊天。 */
+    const setCoListenTarget = useCallback((characterId: string | null) => {
+        setCoListenTargetStore(characterId);
+        setCoListenTargetIdState(resolveCoListenTarget());
     }, []);
 
     // Initialize audio element once
@@ -456,12 +472,16 @@ export function MusicProvider({ children }: { children: ReactNode }) {
 
     const controlsValue = useMemo<MusicControlsValue>(() => ({
         currentTrack, isPlaying, duration, playMode, queue, volume, showFullPlayer, floatDismissed,
+        coListenTargetId,
         playTrack, playUrl, pause, resume, togglePlay, next, prev, seek,
         setPlayMode, setQueue, removeFromQueue, setVolume, stop, dismissFloat, openFullPlayer, closeFullPlayer,
+        setCoListenTarget,
     }), [
         currentTrack, isPlaying, duration, playMode, queue, volume, showFullPlayer, floatDismissed,
+        coListenTargetId,
         playTrack, playUrl, pause, resume, togglePlay, next, prev, seek,
         setQueue, removeFromQueue, setVolume, stop, dismissFloat, openFullPlayer, closeFullPlayer,
+        setCoListenTarget,
     ]);
 
     const value = useMemo<MusicContextValue>(() => ({

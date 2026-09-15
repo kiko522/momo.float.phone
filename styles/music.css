@@ -2021,6 +2021,75 @@
     flex: 0 0 auto;
 }
 
+/* ── 一起听时长卡片（音乐「我的」页） ── */
+.music-colisten-card {
+    margin-top: 12px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    border: 1px solid var(--c-music-surface-solid);
+    background:
+        radial-gradient(220px 130px at 85% 0%, rgba(140, 160, 255, 0.16), transparent 70%),
+        linear-gradient(140deg, #1b2036, #141625 70%);
+    flex-shrink: 0;
+}
+
+.music-colisten-card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.music-colisten-card-title {
+    font-size: calc(13.5px*var(--app-text-scale,1));
+    font-weight: 700;
+    color: var(--c-music-text);
+}
+
+.music-colisten-card-total {
+    font-size: calc(9.9px*var(--app-text-scale,1));
+    color: var(--c-music-accent);
+    font-variant-numeric: tabular-nums;
+}
+
+.music-colisten-card-empty {
+    font-size: calc(10.8px*var(--app-text-scale,1));
+    color: var(--c-music-accent);
+    opacity: 0.7;
+    padding: 4px 0;
+}
+
+.music-colisten-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.music-colisten-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.music-colisten-row-name {
+    font-size: calc(11.7px*var(--app-text-scale,1));
+    color: var(--c-music-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.music-colisten-row-value {
+    font-size: calc(10.8px*var(--app-text-scale,1));
+    color: var(--c-music-accent);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+    margin-left: 10px;
+}
+
 /* ── Header actions (settings gear + close) ── */
 
 .music-header-actions {
@@ -3155,6 +3224,12 @@
     color: var(--c-music-accent);
     opacity: 0.85;
     font-variant-numeric: tabular-nums;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
 }
 
 .mp-colisten-dot {
@@ -3176,6 +3251,69 @@
 @keyframes mp-colisten-pulse {
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.35); }
+}
+
+/* 「一起听」对象选择器 */
+.mp-colisten-picker {
+    position: absolute;
+    inset: 0;
+    z-index: 90;
+    background: rgba(5, 6, 10, 0.4);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: calc(var(--page-header-safe-top, 48px) + 74px);
+}
+
+.mp-colisten-picker-panel {
+    width: 264px;
+    max-height: 56vh;
+    overflow-y: auto;
+    border-radius: 18px;
+    background: var(--c-music-panel, #14161f);
+    border: 1px solid var(--c-music-surface-solid, rgba(255, 255, 255, 0.12));
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    padding: 8px;
+}
+
+.mp-colisten-picker-title {
+    padding: 8px 12px 6px;
+    font-size: calc(11.7px*var(--app-text-scale,1));
+    font-weight: 600;
+    color: var(--c-music-text, #e0d8f0);
+}
+
+.mp-colisten-picker-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: none;
+    border: none;
+    color: var(--c-music-text, #e0d8f0);
+    font-size: calc(12.6px*var(--app-text-scale,1));
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.mp-colisten-picker-item:active {
+    background: var(--c-music-accent-dim, rgba(255, 255, 255, 0.08));
+}
+
+.mp-colisten-picker-item.is-active {
+    background: rgba(255, 84, 104, 0.16);
+    color: #fff;
+}
+
+.mp-colisten-picker-check {
+    color: #ff5468;
+    font-weight: 700;
 }
 
 .mp-top-actions {

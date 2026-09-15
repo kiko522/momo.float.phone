@@ -18,6 +18,7 @@ import MusicCommentsPage from "./music-comments";
 import MusicArtistPage from "./music-artist";
 import { loadMusicBg, playerBgStyle, MUSIC_BG_EVENT, type MusicBgConfig } from "@/lib/music-bg";
 import { getCoListenStats, formatCoListenDuration, MUSIC_CO_LISTEN_EVENT, type CoListenStats } from "@/lib/music-co-listen";
+import { loadCharacters } from "@/lib/character-storage";
 
 const PLAY_MODE_ICONS: Record<PlayMode, { svg: string; label: string }> = {
     sequence: {
@@ -73,6 +74,8 @@ export default function MusicPlayer() {
     const [bgCfg, setBgCfg] = useState<MusicBgConfig>(() => loadMusicBg());
     const [commentTotal, setCommentTotal] = useState(0);
     const [coListen, setCoListen] = useState<CoListenStats>(() => getCoListenStats());
+    const [showCoListenPicker, setShowCoListenPicker] = useState(false);
+    const characters = loadCharacters();
 
     useEffect(() => {
         const handleBgChange = () => setBgCfg(loadMusicBg());
@@ -467,10 +470,14 @@ export default function MusicPlayer() {
                         {track.artist || "未知歌手"}
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 5 7 7-7 7" /></svg>
                     </button>
-                    <div className="mp-colisten" title="累计一起听时长">
+                    <button
+                        className="mp-colisten"
+                        onClick={() => setShowCoListenPicker((value) => !value)}
+                        title="切换一起听对象"
+                    >
                         <span className="mp-colisten-dot" {...(player.isPlaying ? { "data-live": "" } : {})} />
-                        一起听 · {formatCoListenDuration(coListen.todaySeconds)}
-                    </div>
+                        一起听 · {player.coListenTargetId ? (characters.find((item) => item.id === player.coListenTargetId)?.name ?? "…") : "未指定"} · {formatCoListenDuration(coListen.todaySeconds)}
+                    </button>
                 </div>
                 <div className="mp-top-actions">
                     <button className="music-player-ctrl-btn mp-top-btn" onClick={togglePlayerStyle} title={playerStyle === "vinyl" ? "切换现代样式" : "切换黑胶样式"}>
@@ -491,6 +498,34 @@ export default function MusicPlayer() {
                     </button>
                 </div>
             </div>
+
+            {/* 一起听对象选择器 */}
+            {showCoListenPicker && (
+                <div className="mp-colisten-picker" onClick={() => setShowCoListenPicker(false)}>
+                    <div className="mp-colisten-picker-panel" onClick={(event) => event.stopPropagation()}>
+                        <div className="mp-colisten-picker-title">一起听对象</div>
+                        <button
+                            type="button"
+                            className={`mp-colisten-picker-item${coListen.targetId === null ? " is-active" : ""}`}
+                            onClick={() => { player.setCoListenTarget(null); setShowCoListenPicker(false); }}
+                        >
+                            <span>跟随最近聊天</span>
+                            {coListen.targetId === null ? <span className="mp-colisten-picker-check">✓</span> : null}
+                        </button>
+                        {characters.map((item) => (
+                            <button
+                                key={item.id}
+                                type="button"
+                                className={`mp-colisten-picker-item${player.coListenTargetId === item.id && coListen.targetId !== null ? " is-active" : ""}`}
+                                onClick={() => { player.setCoListenTarget(item.id); setShowCoListenPicker(false); }}
+                            >
+                                <span>{item.name}</span>
+                                {player.coListenTargetId === item.id && coListen.targetId !== null ? <span className="mp-colisten-picker-check">✓</span> : null}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Body — cover / vinyl / glow lyrics */}
             <div className="mp-body">

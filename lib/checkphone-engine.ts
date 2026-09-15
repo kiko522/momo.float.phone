@@ -78,6 +78,7 @@ import { DEFAULT_CHECKPHONE_BILINGUAL_PROMPT, resolveBilingualPrompt } from "./b
 import { loadCheckPhoneSettings } from "./checkphone-settings";
 import { prepareShortTermContext } from "./short-term-assembler";
 import { loadPhoneSnapshot } from "./checkphone-storage";
+import { getCoListenStats, formatCoListenDuration } from "./music-co-listen";
 
 function buildCheckPhoneBilingualInstruction(enabled: boolean, customPrompt?: string): string {
   const prompt = resolveBilingualPrompt(enabled, customPrompt, DEFAULT_CHECKPHONE_BILINGUAL_PROMPT);
@@ -1236,6 +1237,24 @@ async function buildCheckPhoneAppMessages(
       ].join("\n"),
     });
   }
+
+  // 音乐 App 注入「一起听」共听时长（真实数据），让角色在查手机时能看到并产生反应。
+  if (batchAppIds.includes("music")) {
+    const coListen = getCoListenStats();
+    const entryLines = coListen.entries.length > 0
+      ? coListen.entries.map((entry) => `- 用户 × ${entry.name}：${formatCoListenDuration(entry.totalSeconds)}（今日 ${formatCoListenDuration(entry.todaySeconds)}）`).join("\n")
+      : "- 暂无一起听记录";
+    messages.push({
+      role: "system",
+      content: [
+        "[一起听记录（真实数据）]",
+        "用户在本机音乐 App 里和不同角色「一起听」的累计时长如下。这是真实数据，你在生成音乐 App 内容时可以据此产生反应：",
+        entryLines,
+        "可以把这份共听时长自然地融入音乐 App 的听歌心情（listeningMood）、歌单推荐语（curatorNote）或歌曲内心（note），体现你对与用户共处时光的在意。",
+      ].join("\n"),
+    });
+  }
+
   return messages;
 }
 

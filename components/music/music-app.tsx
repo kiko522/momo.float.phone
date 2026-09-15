@@ -26,6 +26,7 @@ import {
 } from "@/lib/music-service";
 import { clearMusicCloudSyncData } from "@/lib/chat-engine";
 import { loadCharacters } from "@/lib/character-storage";
+import { getCoListenStats, formatCoListenDuration, MUSIC_CO_LISTEN_EVENT, type CoListenStats } from "@/lib/music-co-listen";
 import type { Character } from "@/lib/character-types";
 import {
     loadAllCharacterMusicAccounts,
@@ -748,6 +749,14 @@ function MineTab({ player, formatTime, onPlayNetease, onPlayAll, activePlaylist,
     const [openRadioId, setOpenRadioId] = useState<number | null>(null);
     const [radioPrograms, setRadioPrograms] = useState<Record<number, NeteaseDjProgram[]>>({});
     const [heartBusy, setHeartBusy] = useState(false);
+    const [coListen, setCoListen] = useState<CoListenStats>(() => getCoListenStats());
+
+    useEffect(() => {
+        const refresh = () => setCoListen(getCoListenStats());
+        refresh();
+        window.addEventListener(MUSIC_CO_LISTEN_EVENT, refresh);
+        return () => window.removeEventListener(MUSIC_CO_LISTEN_EVENT, refresh);
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -917,6 +926,26 @@ function MineTab({ player, formatTime, onPlayNetease, onPlayAll, activePlaylist,
                     ))}
                 </div>
             )}
+
+            {/* 一起听时长 */}
+            <div className="music-colisten-card">
+                <div className="music-colisten-card-head">
+                    <span className="music-colisten-card-title">一起听</span>
+                    <span className="music-colisten-card-total">累计 {formatCoListenDuration(coListen.totalSeconds)}</span>
+                </div>
+                {coListen.entries.length === 0 ? (
+                    <div className="music-colisten-card-empty">还没有一起听记录，放首歌开始吧</div>
+                ) : (
+                    <div className="music-colisten-list">
+                        {coListen.entries.map((entry) => (
+                            <div key={entry.characterId} className="music-colisten-row">
+                                <span className="music-colisten-row-name">你 × {entry.name}</span>
+                                <span className="music-colisten-row-value">{formatCoListenDuration(entry.totalSeconds)}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
 
             {/* 顶层 tabs：播客/笔记拿不到内容就不出现 */}
             {(djRadios.length > 0 || userEvents.length > 0) && (
