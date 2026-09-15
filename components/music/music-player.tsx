@@ -19,6 +19,7 @@ import MusicArtistPage from "./music-artist";
 import { loadMusicBg, playerBgStyle, MUSIC_BG_EVENT, type MusicBgConfig } from "@/lib/music-bg";
 import { getCoListenStats, formatCoListenDuration, MUSIC_CO_LISTEN_EVENT, type CoListenStats } from "@/lib/music-co-listen";
 import { loadCharacters } from "@/lib/character-storage";
+import { resolveUserIdentity } from "@/lib/settings-storage";
 
 const PLAY_MODE_ICONS: Record<PlayMode, { svg: string; label: string }> = {
     sequence: {
@@ -75,7 +76,14 @@ export default function MusicPlayer() {
     const [commentTotal, setCommentTotal] = useState(0);
     const [coListen, setCoListen] = useState<CoListenStats>(() => getCoListenStats());
     const [showCoListenPicker, setShowCoListenPicker] = useState(false);
+    const [coListenView, setCoListenView] = useState(false);
     const characters = loadCharacters();
+    const targetCharacter = player.coListenTargetId
+        ? characters.find((item) => item.id === player.coListenTargetId) ?? null
+        : null;
+    const userIdentity = resolveUserIdentity(player.coListenTargetId ?? undefined, "music");
+    const userName = userIdentity?.name ?? "我";
+    const userAvatar = userIdentity?.avatarUrl ?? null;
 
     useEffect(() => {
         const handleBgChange = () => setBgCfg(loadMusicBg());
@@ -480,6 +488,11 @@ export default function MusicPlayer() {
                     </button>
                 </div>
                 <div className="mp-top-actions">
+                    <button className="music-player-ctrl-btn mp-top-btn" onClick={() => setCoListenView(true)} title="一起听">
+                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                        </svg>
+                    </button>
                     <button className="music-player-ctrl-btn mp-top-btn" onClick={togglePlayerStyle} title={playerStyle === "vinyl" ? "切换现代样式" : "切换黑胶样式"}>
                         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                             <circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
@@ -799,6 +812,108 @@ export default function MusicPlayer() {
             {addResult && (
                 <div className={`music-toast ${addResult.ok ? "music-toast-ok" : "music-toast-err"}`}>
                     {addResult.ok ? "✓ " : "✗ "}{addResult.message}
+                </div>
+            )}
+
+            {/* 一起听视图（模拟网易云一起听界面） */}
+            {coListenView && (
+                <div className="mp-colisten-view">
+                    <div className="mp-colisten-view-top">
+                        <button className="music-player-close" onClick={() => setCoListenView(false)} aria-label="退出一起听">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                                <path d="M15 19 8 12l7-7" />
+                            </svg>
+                        </button>
+                        <div className="mp-colisten-view-title">一起听</div>
+                        <div className="mp-colisten-view-time">{formatCoListenDuration(coListen.todaySeconds)}</div>
+                    </div>
+
+                    <div className="mp-colisten-view-body">
+                        {/* 双人卡片 */}
+                        <div className="mp-colisten-duo">
+                            <div className="mp-colisten-person">
+                                <div className="mp-colisten-avatar">
+                                    {userAvatar ? <img src={userAvatar} alt="" /> : <span>{userName.slice(0, 1)}</span>}
+                                </div>
+                                <div className="mp-colisten-person-name">{userName}</div>
+                            </div>
+                            <div className="mp-colisten-heart" aria-hidden="true">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                                </svg>
+                            </div>
+                            <div className="mp-colisten-person">
+                                <div className="mp-colisten-avatar">
+                                    {targetCharacter?.avatar ? <img src={targetCharacter.avatar} alt="" /> : <span>{(targetCharacter?.name || "TA").slice(0, 1)}</span>}
+                                </div>
+                                <div className="mp-colisten-person-name">{targetCharacter?.name || "对方"}</div>
+                            </div>
+                        </div>
+
+                        {/* 共享唱片 */}
+                        <div className="mp-colisten-vinyl" {...(player.isPlaying ? { "data-spinning": "" } : {})}>
+                            {track.coverUrl ? (
+                                <img src={track.coverUrl} alt="" />
+                            ) : (
+                                <div className="mp-colisten-vinyl-placeholder">♪</div>
+                            )}
+                        </div>
+
+                        {/* 歌曲信息 */}
+                        <div className="mp-colisten-meta">
+                            <div className="mp-colisten-song">{track.title}</div>
+                            <div className="mp-colisten-artist">{track.artist || "未知歌手"}</div>
+                        </div>
+
+                        {/* 当前歌词 */}
+                        <div className="mp-colisten-lyric">
+                            {activeLyricText ? `「${activeLyricText}」` : hasLyrics ? "" : "暂无歌词"}
+                        </div>
+
+                        {/* 进度 */}
+                        <div className="mp-colisten-progress">
+                            <div className="mp-colisten-progress-track">
+                                <div className="mp-colisten-progress-fill" style={{ width: `${progress * 100}%` }} />
+                            </div>
+                            <div className="mp-colisten-times">
+                                <span>{formatTime(currentTime)}</span>
+                                <span>{formatTime(player.duration)}</span>
+                            </div>
+                        </div>
+
+                        {/* 控制 */}
+                        <div className="mp-colisten-controls">
+                            <button className="music-player-ctrl-btn mp-ctrl-side" onClick={cyclePlayMode} title={modeInfo.label}>
+                                <svg width="20" height="20" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: modeInfo.svg }} />
+                            </button>
+                            <button className="music-player-ctrl-btn mp-ctrl" onClick={handlePrev}>
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                                </svg>
+                            </button>
+                            <button className="music-player-ctrl-btn mp-ctrl-play" onClick={player.togglePlay}>
+                                {player.isPlaying ? (
+                                    <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M6 4h4v16H6zm8 0h4v16h-4z" />
+                                    </svg>
+                                ) : (
+                                    <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M8 5v14l11-7z" />
+                                    </svg>
+                                )}
+                            </button>
+                            <button className="music-player-ctrl-btn mp-ctrl" onClick={handleNext}>
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M6 18l8.5-6L6 6v12zm8.5 0h2V6h-2v12z" />
+                                </svg>
+                            </button>
+                            <button className="music-player-ctrl-btn mp-ctrl-side" onClick={() => setShowCoListenPicker(true)} title="切换一起听对象">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <circle cx="9" cy="8" r="3.5" /><circle cx="17" cy="10" r="2.5" /><path d="M3 19c0-3 2.5-5 6-5s6 2 6 5M15 14c0-2 1.5-3.5 3.5-3.5S22 12 22 14" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
