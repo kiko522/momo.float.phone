@@ -28,7 +28,10 @@ import {
   moveCharacterToWorld,
   renameCharacterWorldGroup,
   updateCharacterWorldDescription,
+  getCurrentWorldId,
+  setCurrentWorldId as persistCurrentWorldId,
   CHARACTER_WORLDS_UPDATED_EVENT,
+  CURRENT_WORLD_CHANGED_EVENT,
   DEFAULT_CHARACTER_WORLD_ID,
   type CharacterWorldGroup,
 } from "@/lib/character-world-storage";
@@ -204,19 +207,30 @@ export function PhoneCharacterApp({ onClose, onNotice }: PhoneCharacterAppProps)
   // ── 世界卷宗：分组数据 + 当前打开的卷宗（持久记忆） ──
   const [worldGroups, setWorldGroups] = useState<CharacterWorldGroup[]>(() => loadCharacterWorldGroups());
   const [currentWorldId, setCurrentWorldId] = useState<string>(() => {
+    // 迁移：优先读全局「当前世界」；没有时沿用旧的本 App 私有记忆
+    const global = typeof window !== "undefined" ? getCurrentWorldId() : DEFAULT_CHARACTER_WORLD_ID;
+    if (global && global !== DEFAULT_CHARACTER_WORLD_ID) return global;
     const saved = typeof window !== "undefined" ? kvGet(WORLD_TAB_KEY) : null;
     return saved || DEFAULT_CHARACTER_WORLD_ID;
   });
   useEffect(() => {
     const reload = () => setWorldGroups(loadCharacterWorldGroups());
+    // 联系人页等切换世界后这里同步跟上（双向同步）
+    const reloadCurrent = () => setCurrentWorldId(getCurrentWorldId());
     window.addEventListener(CHARACTER_WORLDS_UPDATED_EVENT, reload);
-    return () => window.removeEventListener(CHARACTER_WORLDS_UPDATED_EVENT, reload);
+    window.addEventListener(CURRENT_WORLD_CHANGED_EVENT, reloadCurrent);
+    return () => {
+      window.removeEventListener(CHARACTER_WORLDS_UPDATED_EVENT, reload);
+      window.removeEventListener(CURRENT_WORLD_CHANGED_EVENT, reloadCurrent);
+    };
   }, []);
   // 记忆的世界可能已被删除 → 回落默认卷宗
   const safeWorldId = worldGroups.some(g => g.id === currentWorldId) ? currentWorldId : DEFAULT_CHARACTER_WORLD_ID;
   function selectWorldId(worldId: string) {
     setCurrentWorldId(worldId);
     try { kvSet(WORLD_TAB_KEY, worldId); } catch { }
+    // 持久化 + 广播：联系人列表、消息列表监听方会据此切到同一个世界
+    persistCurrentWorldId(worldId);
   }
 
   function updateChars(next: Character[]) {

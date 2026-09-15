@@ -9,6 +9,14 @@ import { resolveUserIdentity, USER_IDENTITIES_UPDATED_EVENT } from "@/lib/settin
 import type { UserIdentity } from "@/components/settings/user-identity";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import { clearRequestsForCharacter, dispatchFriendRequestUpdated } from "@/lib/friend-request-storage";
+import {
+    loadCharacterWorldGroups,
+    getCurrentWorldId,
+    CHARACTER_WORLDS_UPDATED_EVENT,
+    CURRENT_WORLD_CHANGED_EVENT,
+    DEFAULT_CHARACTER_WORLD_ID,
+    type CharacterWorldGroup,
+} from "@/lib/character-world-storage";
 import { UserProfilePanel } from "./user-profile-panel";
 import { PageShell } from "@/components/ui/page-shell";
 import { GroupCreateModal } from "./group-create-modal";
@@ -117,6 +125,25 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
     const [mergePrompt, setMergePrompt] = useState<DuplicateSessionGroup[] | null>(null);
     const [mergeSelected, setMergeSelected] = useState<Set<string>>(new Set());
     const [identity, setIdentity] = useState<UserIdentity | null>(null);
+    // 按世界分区：与联系人页共用同一份状态，切世界时私聊会话只显示当前世界的角色
+    const [worldGroups, setWorldGroups] = useState<CharacterWorldGroup[]>(() => loadCharacterWorldGroups());
+    const [currentWorldId, setCurrentWorldIdState] = useState<string>(() => getCurrentWorldId());
+    useEffect(() => {
+        const reloadGroups = () => setWorldGroups(loadCharacterWorldGroups());
+        const reloadCurrent = () => setCurrentWorldIdState(getCurrentWorldId());
+        window.addEventListener(CHARACTER_WORLDS_UPDATED_EVENT, reloadGroups);
+        window.addEventListener(CURRENT_WORLD_CHANGED_EVENT, reloadCurrent);
+        return () => {
+            window.removeEventListener(CHARACTER_WORLDS_UPDATED_EVENT, reloadGroups);
+            window.removeEventListener(CURRENT_WORLD_CHANGED_EVENT, reloadCurrent);
+        };
+    }, []);
+    const safeWorldId = worldGroups.some(g => g.id === currentWorldId) ? currentWorldId : DEFAULT_CHARACTER_WORLD_ID;
+    const worldFilterActive = worldGroups.length > 1;
+    const currentWorldMemberIds = React.useMemo(
+        () => new Set(worldGroups.find(g => g.id === safeWorldId)?.memberIds ?? []),
+        [worldGroups, safeWorldId]
+    );
     const mascotSettings = useSyncExternalStore(subscribeMascotSettings, getMascotSettingsSnapshot, getMascotSettingsSnapshot);
     const mascotChat = useSyncExternalStore(subscribeMascotChat, getMascotChatSnapshot, getMascotChatSnapshot);
     const [mascotAvatarUrl, setMascotAvatarUrl] = useState(mascotSettings.avatarImage || DEFAULT_MASCOT_AVATAR);
@@ -295,6 +322,8 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
                             const regularItems = [...sessions]
                             .filter(s => {
                                 if (!(s.isGroup || contactIds.has(s.contactId))) return false;
+                                // 只过滤私聊：角色不在当前世界的私聊暂时隐藏；群聊不受影响
+                                if (worldFilterActive && !s.isGroup && !currentWorldMemberIds.has(s.contactId)) return false;
                                 if (!hasSessionListContent(s.id)) return false;
                                 if (listTab === "private" && s.isGroup) return false;
                                 if (listTab === "group" && !s.isGroup) return false;

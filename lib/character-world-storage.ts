@@ -5,10 +5,13 @@ import type { Character } from "./character-types";
 import type { MomentComment, MomentLike, MomentPost } from "./moments-types";
 
 const CHARACTER_WORLDS_KEY = "ai_phone_character_worlds_v1";
+const CURRENT_WORLD_KEY = "ai_phone_current_world_v1";
 export const CHARACTER_WORLDS_UPDATED_EVENT = "character-worlds-updated";
+export const CURRENT_WORLD_CHANGED_EVENT = "current-world-changed";
 export const DEFAULT_CHARACTER_WORLD_ID = "world_default";
 
 registerKvMigration(CHARACTER_WORLDS_KEY);
+registerKvMigration(CURRENT_WORLD_KEY);
 
 export type CharacterWorldRelation = {
     id: string;
@@ -134,6 +137,20 @@ function normalizeGroups(groups: CharacterWorldGroup[], characters: Character[])
     }
 
     return { groups: normalized, changed };
+}
+
+/** 当前打开的世界 id（持久记忆）；找不到记录时回落默认世界 */
+export function getCurrentWorldId(): string {
+    if (!isBrowser()) return DEFAULT_CHARACTER_WORLD_ID;
+    const raw = kvGet(CURRENT_WORLD_KEY);
+    return (typeof raw === "string" && raw.trim()) ? raw : DEFAULT_CHARACTER_WORLD_ID;
+}
+
+/** 持久化并广播当前世界切换：角色页 / 联系人页 / 消息列表监听同一事件保持同步 */
+export function setCurrentWorldId(worldId: string): void {
+    if (!isBrowser()) return;
+    kvSet(CURRENT_WORLD_KEY, worldId || DEFAULT_CHARACTER_WORLD_ID);
+    window.dispatchEvent(new CustomEvent(CURRENT_WORLD_CHANGED_EVENT));
 }
 
 export function loadCharacterWorldGroups(): CharacterWorldGroup[] {
