@@ -24,6 +24,8 @@ export type CharacterWorldGroup = {
     id: string;
     name: string;
     description: string;
+    /** 此世界对应的用户身份卡；未设置时回落角色绑定/全局默认 */
+    userIdentityId?: string;
     memberIds: string[];
     relations: CharacterWorldRelation[];
     createdAt: string;
@@ -109,6 +111,9 @@ function normalizeGroups(groups: CharacterWorldGroup[], characters: Character[])
                 id: group.id,
                 name: group.name.trim() || "未命名世界",
                 description: typeof group.description === "string" ? group.description.trim() : "",
+                userIdentityId: typeof group.userIdentityId === "string" && group.userIdentityId.trim()
+                    ? group.userIdentityId.trim()
+                    : undefined,
                 memberIds: members,
                 relations,
                 createdAt: group.createdAt || now,
@@ -192,6 +197,21 @@ export function renameCharacterWorldGroup(groupId: string, name: string): void {
             ? { ...group, name: name.trim() || group.name, updatedAt: now }
             : group
     ));
+}
+
+/** 设置某个世界绑定的用户身份卡（空值表示不绑定，回落到其他身份设置） */
+export function setCharacterWorldUserIdentity(groupId: string, userIdentityId?: string): void {
+    const now = new Date().toISOString();
+    const normalizedId = userIdentityId?.trim() || undefined;
+    saveCharacterWorldGroups(loadCharacterWorldGroups().map(group =>
+        group.id === groupId
+            ? { ...group, userIdentityId: normalizedId, updatedAt: now }
+            : group
+    ));
+    // 当前打开的世界改了身份时，也通知所有依赖当前身份的界面立即刷新。
+    if (getCurrentWorldId() === groupId && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(CURRENT_WORLD_CHANGED_EVENT));
+    }
 }
 
 export function updateCharacterWorldDescription(groupId: string, description: string): void {

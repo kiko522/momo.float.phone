@@ -1,7 +1,7 @@
 // lib/moments-storage.ts
 // KV-DB persistence for Moments (朋友圈) feature.
 
-import type { MomentPost, MomentComment, AIMomentSchedule, PendingReaction } from "./moments-types";
+import type { MomentPost, MomentComment, MomentLike, AIMomentSchedule, PendingReaction } from "./moments-types";
 import { loadCharacters } from "./character-storage";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { DEFAULT_MOMENTS_BILINGUAL_PROMPT } from "./bilingual-prompt-defaults";
@@ -18,9 +18,12 @@ import {
 
 const AI_SCHEDULE_KEY = "ai_phone_moments_ai_schedule_v1";
 const PENDING_REACTIONS_KEY = "ai_phone_moments_pending_reactions_v1";
+// 用户明确要求清理旧测试用的 user 朋友圈数据；仅执行一次。
+const USER_MOMENTS_WORLD_MIGRATION_KEY = "ai_phone_user_moments_world_migration_v1";
 
 registerKvMigration(AI_SCHEDULE_KEY);
 registerKvMigration(PENDING_REACTIONS_KEY);
+registerKvMigration(USER_MOMENTS_WORLD_MIGRATION_KEY);
 
 // ── In-memory cache (source of truth for sync reads; mirrored to AiPhoneMomentsDB) ──
 // Posts & comments live in IndexedDB as individual rows (no more monolithic kv
@@ -37,6 +40,7 @@ export function hydrateMomentsStorage(): Promise<void> {
     _hydratePromise = initMomentsDb().then(data => {
         _postsCache = data.posts;
         _commentsCache = data.comments;
+        migrateLegacyUserMomentData();
         _hydrated = true;
     }).catch(err => {
         console.warn("[MomentsStorage] hydration failed, will retry on next call:", err);
@@ -46,6 +50,47 @@ export function hydrateMomentsStorage(): Promise<void> {
 }
 
 // ── Helpers ──
+
+/**
+ * 一次性清理早期没有 worldId/userIdentityId 的 user 测试数据。
+ * 角色发帖和角色互动保留；后续新建的用户内容都会带完整归属。
+ */
+function migrateLegacyUserMomentData(): void {
+    if (!isBrowser() || kvGet(USER_MOMENTS_WORLD_MIGRATION_KEY) === "done") return;
+    const oldPosts = _postsCache ?? [];
+    const removedPostIds = new Set(oldPosts
+        .filter(post => post.authorType === "user" && (!post.worldId || !post.userIdentityId))
+        .map(post => post.id));
+    const nextPosts = oldPosts.map(post => {
+        if (post.likes.some(like => like.authorType === "user" && (!like.worldId || !like.userIdentityId))) {
+            return { ...post, likes: post.likes.filter(like => like.authorType !== "user" || (like.worldId && like.userIdentityId)) };
+        }
+        return post;
+    }).filter(post => !removedPostIds.has(post.id));
+    const oldComments = _commentsCache ?? [];
+    const removedCommentIds = new Set(oldComments
+        .filter(comment => removedPostIds.has(comment.postId)
+            || (comment.authorType === "user" && (!comment.worldId || !comment.userIdentityId)))
+        .map(comment => comment.id));
+    // 评论树里父评论被清掉时，递归清掉所有回复，避免残留孤儿回复。
+    let expanded = true;
+    while (expanded) {
+        expanded = false;
+        for (const comment of oldComments) {
+            if (comment.replyToCommentId && removedCommentIds.has(comment.replyToCommentId) && !removedCommentIds.has(comment.id)) {
+                removedCommentIds.add(comment.id);
+                expanded = true;
+            }
+        }
+    }
+    const nextComments = oldComments.filter(comment => !removedCommentIds.has(comment.id));
+    _postsCache = nextPosts;
+    _commentsCache = nextComments;
+    dbReplacePosts(nextPosts);
+    for (const postId of removedPostIds) dbDeleteCommentsByPost(postId);
+    for (const commentId of removedCommentIds) dbDeleteComment(commentId);
+    kvSet(USER_MOMENTS_WORLD_MIGRATION_KEY, "done");
+}
 
 function isBrowser(): boolean {
     return typeof window !== "undefined";
@@ -208,14 +253,20 @@ export function toggleMomentLike(
     postId: string,
     authorType: "user" | "character",
     authorId: string,
+    metadata?: Pick<MomentLike, "userIdentityId" | "worldId">,
 ): boolean {
     const posts = loadMomentPosts();
     const post = posts.find(p => p.id === postId);
     if (!post) return false;
 
-    const existingIdx = post.likes.findIndex(
-        l => l.authorType === authorType && l.authorId === authorId
-    );
+    const existingIdx = post.likes.findIndex(l => {
+        if (l.authorType !== authorType || l.authorId !== authorId) return false;
+        // 同一逻辑 userId 在不同世界/身份下应是独立的点赞记录。
+        if (authorType === "user") {
+            return l.userIdentityId === metadata?.userIdentityId && l.worldId === metadata?.worldId;
+        }
+        return true;
+    });
 
     if (existingIdx >= 0) {
         post.likes.splice(existingIdx, 1);
@@ -225,6 +276,7 @@ export function toggleMomentLike(
         post.likes.push({
             authorType,
             authorId,
+            ...(authorType === "user" ? metadata : {}),
             createdAt: new Date().toISOString(),
         });
         dbPutPost(post);
@@ -403,11 +455,11 @@ export function saveMomentsLastSeen(): void {
 }
 
 /** Get all comments/replies targeting the user that are newer than lastSeen. */
-export function getUnreadMomentsNotifications(): { authorName: string; authorId: string; content: string; type: "comment" | "reply" | "like"; createdAt: string }[] {
+export function getUnreadMomentsNotifications(): { authorName: string; authorId: string; postId: string; userIdentityId?: string; worldId?: string; content: string; type: "comment" | "reply" | "like"; createdAt: string }[] {
     const lastSeen = loadMomentsLastSeen();
     const posts = loadMomentPosts();
     const userPostIds = new Set(posts.filter(p => p.authorType === "user").map(p => p.id));
-    const results: { authorName: string; authorId: string; content: string; type: "comment" | "reply" | "like"; createdAt: string }[] = [];
+    const results: { authorName: string; authorId: string; postId: string; userIdentityId?: string; worldId?: string; content: string; type: "comment" | "reply" | "like"; createdAt: string }[] = [];
 
     const chars = loadCharacters();
     const resolveAuthorName = (c: { authorType: string; authorId: string; authorName?: string }) => {
@@ -423,7 +475,16 @@ export function getUnreadMomentsNotifications(): { authorName: string; authorId:
                 if (like.authorType === "user") continue;
                 const ts = new Date(like.createdAt).getTime();
                 if (ts <= lastSeen) continue;
-                results.push({ authorName: resolveAuthorName(like), authorId: like.authorId, content: "", type: "like", createdAt: like.createdAt });
+                results.push({
+                    authorName: resolveAuthorName(like),
+                    authorId: like.authorId,
+                    postId: post.id,
+                    userIdentityId: post.userIdentityId,
+                    worldId: post.worldId,
+                    content: "",
+                    type: "like",
+                    createdAt: like.createdAt,
+                });
             }
         }
 
@@ -438,11 +499,29 @@ export function getUnreadMomentsNotifications(): { authorName: string; authorId:
 
             // Comment on user's post
             if (userPostIds.has(post.id) && !c.replyToAuthorId) {
-                results.push({ authorName: name, authorId: c.authorId, content: c.content, type: "comment", createdAt: c.createdAt });
+                results.push({
+                    authorName: name,
+                    authorId: c.authorId,
+                    postId: post.id,
+                    userIdentityId: post.userIdentityId,
+                    worldId: post.worldId,
+                    content: c.content,
+                    type: "comment",
+                    createdAt: c.createdAt,
+                });
             }
             // Reply to user's comment
             if (c.replyToAuthorType === "user") {
-                results.push({ authorName: name, authorId: c.authorId, content: c.content, type: "reply", createdAt: c.createdAt });
+                results.push({
+                    authorName: name,
+                    authorId: c.authorId,
+                    postId: post.id,
+                    userIdentityId: post.userIdentityId,
+                    worldId: post.worldId,
+                    content: c.content,
+                    type: "reply",
+                    createdAt: c.createdAt,
+                });
             }
         }
     }

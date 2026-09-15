@@ -211,7 +211,11 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     useEffect(() => {
         const syncIdentity = () => setIdentity(resolveUserIdentity());
         window.addEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
-        return () => window.removeEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
+        window.addEventListener("current-world-changed", syncIdentity);
+        return () => {
+            window.removeEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
+            window.removeEventListener("current-world-changed", syncIdentity);
+        };
     }, []);
 
     const handleProfileAvatarChange = async (file?: File) => {

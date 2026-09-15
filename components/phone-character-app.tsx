@@ -28,6 +28,7 @@ import {
   moveCharacterToWorld,
   renameCharacterWorldGroup,
   updateCharacterWorldDescription,
+  setCharacterWorldUserIdentity,
   getCurrentWorldId,
   setCurrentWorldId as persistCurrentWorldId,
   CHARACTER_WORLDS_UPDATED_EVENT,
@@ -1452,6 +1453,7 @@ function CharListView({
           group={currentGroup}
           onRename={name => renameCharacterWorldGroup(currentGroup.id, name)}
           onUpdateDescription={description => updateCharacterWorldDescription(currentGroup.id, description)}
+          onUpdateUserIdentity={identityId => setCharacterWorldUserIdentity(currentGroup.id, identityId)}
           onDelete={() => {
             deleteCharacterWorldGroup(currentGroup.id);
             setShowWorldEditor(false);

@@ -24,6 +24,7 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
     const [worldGroups] = useState(() => loadCharacterWorldGroups());
     const [currentWorldId] = useState(() => getCurrentWorldId());
     const safeWorldId = worldGroups.some(g => g.id === currentWorldId) ? currentWorldId : DEFAULT_CHARACTER_WORLD_ID;
+    const currentUserIdentity = resolveUserIdentity();
     const worldFilterActive = worldGroups.length > 1;
     const currentWorldMemberIds = new Set(worldGroups.find(g => g.id === safeWorldId)?.memberIds ?? []);
 
@@ -182,6 +183,8 @@ export function MomentsCompose({ onClose, onPublished }: Props) {
         const post = addMomentPost({
             authorType: "user",
             authorId: "user",
+            userIdentityId: currentUserIdentity?.id,
+            worldId: safeWorldId,
             content,
             photoUrl: photoAssetId ? `asset://${photoAssetId}` : undefined,
             photoDescription: photoDesc.trim() || undefined,

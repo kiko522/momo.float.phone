@@ -152,7 +152,11 @@ export function ChatMessageList({ onCloseApp, activeSession, onSelectSession, on
         setIdentity(resolveUserIdentity());
         const syncIdentity = () => setIdentity(resolveUserIdentity());
         window.addEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
-        return () => window.removeEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
+        window.addEventListener(CURRENT_WORLD_CHANGED_EVENT, syncIdentity);
+        return () => {
+            window.removeEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
+            window.removeEventListener(CURRENT_WORLD_CHANGED_EVENT, syncIdentity);
+        };
     }, []);
 
     useEffect(() => {

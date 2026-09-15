@@ -1222,13 +1222,25 @@ export function saveUserIdentities(identities: UserIdentity[]): void {
 export const USER_IDENTITIES_UPDATED_EVENT = "user-identities-updated";
 
 /**
- * Resolve user identity through the binding cascade:
- *   global defaults → APP defaults → character defaults → character APP overrides.
- * Falls back to first identity if binding has no userIdentityId set.
+ * Resolve user identity. A bound current-world identity is the highest-priority
+ * choice; this keeps every screen and every character in one world on the same
+ * user persona. Legacy role/app bindings remain the fallback when a world has
+ * no identity configured, then the first identity is used as global fallback.
  */
 export function resolveUserIdentity(characterId?: string, appId?: string): UserIdentity | null {
     const identities = loadUserIdentities();
     if (identities.length === 0) return null;
+
+    // Avoid importing character-world-storage here: it already depends on chat
+    // storage, which depends on this module. These are its stable persisted keys.
+    try {
+        const currentWorldId = kvGet("ai_phone_current_world_v1") || "world_default";
+        const rawWorlds = kvGet("ai_phone_character_worlds_v1");
+        const worlds = rawWorlds ? JSON.parse(rawWorlds) as Array<{ id?: string; userIdentityId?: string }> : [];
+        const worldIdentityId = worlds.find(world => world.id === currentWorldId)?.userIdentityId?.trim();
+        if (worldIdentityId) return identities.find(identity => identity.id === worldIdentityId) || identities[0];
+    } catch { /* malformed legacy world data falls through to existing bindings */ }
+
     const config = loadBindingConfig();
     const resolved = resolveBinding(config, characterId, appId);
     if (resolved.userIdentityId) {

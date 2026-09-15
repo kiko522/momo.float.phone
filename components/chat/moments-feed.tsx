@@ -87,7 +87,12 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
     useEffect(() => {
         const syncIdentity = () => setUserIdentity(resolveUserIdentity());
         window.addEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
-        return () => window.removeEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
+        // 世界绑定的身份切换不修改身份卡本身，也需要刷新朋友圈主页资料。
+        window.addEventListener(CURRENT_WORLD_CHANGED_EVENT, syncIdentity);
+        return () => {
+            window.removeEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
+            window.removeEventListener(CURRENT_WORLD_CHANGED_EVENT, syncIdentity);
+        };
     }, []);
     const [editingSignature, setEditingSignature] = useState(false);
     const sigInputRef = useRef<HTMLInputElement>(null);
@@ -133,18 +138,22 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
     const refreshPosts = useCallback(() => {
         const contactIds = new Set(loadChatContacts().map(c => c.characterId));
         setPosts(getAllPosts().filter(p => {
-            if (p.authorType === "user") return true;
+            if (p.authorType === "user") {
+                // 用户动态必须同时属于当前世界和当前身份，避免两条 user 线串档。
+                return p.worldId === safeWorldId && p.userIdentityId === userIdentity?.id;
+            }
             if (!contactIds.has(p.authorId)) return false;
             // 多世界时：只显示当前世界角色的动态
             if (worldGroups.length > 1 && !currentWorldMemberIds.has(p.authorId)) return false;
             return true;
         }));
         setUnreadNotifs(getUnreadMomentsNotifications().filter(n => {
-            // 多世界时：只显示当前世界角色发来的提醒
-            if (worldGroups.length <= 1) return true;
+            // 提醒属于哪条用户动态，就跟随该动态的世界和身份，避免两条 user 线串提醒。
+            if (n.worldId !== safeWorldId || n.userIdentityId !== userIdentity?.id) return false;
+            // 再过滤互动发起人，确保只显示当前世界角色发来的提醒。
             return currentWorldMemberIds.has(n.authorId);
         }));
-    }, [worldGroups, currentWorldMemberIds]);
+    }, [worldGroups, currentWorldMemberIds, safeWorldId, userIdentity?.id]);
 
     const captureScrollAnchor = useCallback((): MomentScrollAnchorSnapshot | null => {
         const el = getScrollElement();
@@ -275,10 +284,14 @@ export function MomentsFeed({ onCloseApp }: MomentsFeedProps) {
         const target = activeComposer;
         if (!text || !target) return;
 
+        const currentIdentity = resolveUserIdentity();
+        const currentWorldId = kvGet("ai_phone_current_world_v1") || "world_default";
         addMomentComment({
             postId: target.postId,
             authorType: "user",
             authorId: "user",
+            userIdentityId: currentIdentity?.id,
+            worldId: currentWorldId,
             content: text,
             replyToCommentId: target.replyTo?.commentId,
             replyToAuthorId: target.replyTo?.authorId,

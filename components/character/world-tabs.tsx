@@ -7,6 +7,7 @@
 import { useState } from "react";
 import type { CharacterWorldGroup } from "@/lib/character-world-storage";
 import { DEFAULT_CHARACTER_WORLD_ID } from "@/lib/character-world-storage";
+import { loadUserIdentities } from "@/lib/settings-storage";
 
 export function WorldTabStrip({
   groups,
@@ -61,23 +62,28 @@ export function WorldCaseSheet({
   group,
   onRename,
   onUpdateDescription,
+  onUpdateUserIdentity,
   onDelete,
   onClose,
 }: {
   group: CharacterWorldGroup;
   onRename: (name: string) => void;
   onUpdateDescription: (description: string) => void;
+  onUpdateUserIdentity: (userIdentityId?: string) => void;
   onDelete: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(group.name);
   const [description, setDescription] = useState(group.description);
+  const [userIdentityId, setUserIdentityId] = useState(group.userIdentityId || "");
+  const identities = loadUserIdentities();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const isDefault = group.id === DEFAULT_CHARACTER_WORLD_ID;
 
   const save = () => {
     if (name.trim() && name.trim() !== group.name) onRename(name.trim());
     if (description.trim() !== group.description) onUpdateDescription(description.trim());
+    if (userIdentityId !== (group.userIdentityId || "")) onUpdateUserIdentity(userIdentityId || undefined);
     onClose();
   };
 
@@ -95,6 +101,21 @@ export function WorldCaseSheet({
           disabled={isDefault}
         />
         {isDefault && <p className="wt-paper-hint">默认世界不可改名或删除，删除其他世界时角色会回到这里。</p>}
+        <label className="wt-paper-label">我在这个世界的身份</label>
+        <select
+          className="wt-paper-input"
+          value={userIdentityId}
+          onChange={e => setUserIdentityId(e.target.value)}
+        >
+          <option value="">不绑定（沿用角色绑定 / 全局默认）</option>
+          {identities.map(identity => (
+            <option key={identity.id} value={identity.id}>
+              {identity.name || "未命名身份"}{identity.occupation ? ` · ${identity.occupation}` : ""}
+            </option>
+          ))}
+        </select>
+        {identities.length === 0 && <p className="wt-paper-hint">请先到「设置 → 用户身份」新建身份卡。</p>}
+        <p className="wt-paper-hint">绑定后，切到此世界时消息、朋友圈和 AI 看到的 user 人设都会使用此身份。</p>
         <label className="wt-paper-label">世界观描述（会注入该世界所有角色的上下文）</label>
         <textarea
           className="wt-paper-textarea"

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue, useSyncExternalStore } from "react";
 import { loadChatContacts, ChatContact, createOrGetSession, ChatSession, addChatContact, pushChatMessage, loadChatMessages } from "@/lib/chat-storage";
-import { resolveUserIdentity } from "@/lib/settings-storage";
+import { resolveUserIdentity, USER_IDENTITIES_UPDATED_EVENT } from "@/lib/settings-storage";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
 import { Character } from "@/lib/character-types";
@@ -91,7 +91,16 @@ export function ChatContactsList({ onCloseApp, onSelectSession, onSelectMascot, 
         [currentWorldGroup]
     );
 
-    const identity = useMemo(() => resolveUserIdentity(), []);
+    const [identity, setIdentity] = useState(() => resolveUserIdentity());
+    useEffect(() => {
+        const syncIdentity = () => setIdentity(resolveUserIdentity());
+        window.addEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
+        window.addEventListener(CURRENT_WORLD_CHANGED_EVENT, syncIdentity);
+        return () => {
+            window.removeEventListener(USER_IDENTITIES_UPDATED_EVENT, syncIdentity);
+            window.removeEventListener(CURRENT_WORLD_CHANGED_EVENT, syncIdentity);
+        };
+    }, []);
     const chars = useMemo(() => loadCharacters(), []);
     const deferredContactFilter = useDeferredValue(contactFilter);
     const bodyRef = useRef<HTMLDivElement>(null);

@@ -15,6 +15,7 @@ import {
 } from "@/lib/moments-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { resolveUserIdentity } from "@/lib/settings-storage";
+import { getCurrentWorldId, loadCharacterWorldGroups } from "@/lib/character-world-storage";
 import { buildTwoLevelMomentThreads } from "@/lib/moments-comment-threading";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import { splitBilingualText } from "@/lib/bilingual-text";
@@ -124,12 +125,21 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
     const timeAgo = formatTimeAgo(post.createdAt);
 
     // Like handling
-    const isLikedByUser = post.likes.some(l => l.authorType === "user");
+    const currentUserIdentity = resolveUserIdentity();
+    const currentWorldId = getCurrentWorldId();
+    const isLikedByUser = post.likes.some(l =>
+        l.authorType === "user"
+        && l.userIdentityId === currentUserIdentity?.id
+        && l.worldId === currentWorldId
+    );
     const momentsConfig = loadMomentsConfig();
     const defaultTranslationExpanded = momentsConfig.collapseBilingualTranslation === true ? false : true;
 
     const handleLike = () => {
-        toggleMomentLike(post.id, "user", "user");
+        toggleMomentLike(post.id, "user", "user", {
+            userIdentityId: currentUserIdentity?.id,
+            worldId: currentWorldId,
+        });
         onUpdate();
     };
 
@@ -248,9 +258,26 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
         return () => window.removeEventListener("moments-updated", handler);
     }, [post.id]);
 
+    // 当前世界只展示本世界角色的互动，以及当前 user 身份留下的互动。
+    const currentWorldMemberIds = useMemo(() => {
+        const worldId = getCurrentWorldId();
+        return new Set(loadCharacterWorldGroups().find(group => group.id === worldId)?.memberIds ?? []);
+    }, [currentWorldId]);
+    const visibleLikes = post.likes.filter(like => {
+        if (like.authorType === "user") {
+            return like.userIdentityId === currentUserIdentity?.id && like.worldId === currentWorldId;
+        }
+        return like.authorType === "npc" || currentWorldMemberIds.has(like.authorId);
+    });
+    const visibleComments = comments.filter(comment => {
+        if (comment.authorType === "user") {
+            return comment.userIdentityId === currentUserIdentity?.id && comment.worldId === currentWorldId;
+        }
+        return comment.authorType === "npc" || currentWorldMemberIds.has(comment.authorId);
+    });
     // Liked names list
-    const likeNames = post.likes.map(l => getAuthorName(l.authorType, l.authorId, l.authorName));
-    const commentThreads = useMemo(() => buildTwoLevelMomentThreads(comments), [comments]);
+    const likeNames = visibleLikes.map(l => getAuthorName(l.authorType, l.authorId, l.authorName));
+    const commentThreads = useMemo(() => buildTwoLevelMomentThreads(visibleComments), [visibleComments]);
     const fallbackPhotoDescription = post.photoDescription && !post.photoUrl
         ? post.photoDescription
         : null;
@@ -596,7 +623,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
             </div>
 
             {/* Likes + Comments section */}
-            {(likeNames.length > 0 || comments.length > 0) && (
+            {(likeNames.length > 0 || visibleComments.length > 0) && (
                 <div className="feed-feedback-section w-full flex flex-col gap-2 mb-3 mt-1">
                     {/* Likes row */}
                     {likeNames.length > 0 && (
@@ -611,7 +638,7 @@ export function MomentPostCard({ post, onUpdate, onRequestDelete, onOpenCommentC
                     )}
 
                     {/* Comments list */}
-                    {comments.length > 0 && (
+                    {visibleComments.length > 0 && (
                         <div className="feed-comments flex flex-col gap-1 w-full mt-1">
                             {commentThreads.map(({ root, replies }) => {
                                 const rootName = getAuthorName(root.authorType, root.authorId, root.authorName);

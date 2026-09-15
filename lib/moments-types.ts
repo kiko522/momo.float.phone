@@ -5,6 +5,10 @@ export type MomentPost = {
     id: string;                     // "moment_timestamp_random"
     authorType: "user" | "character";
     authorId: string;               // characterId or "user"
+    /** 用户发帖时记录所属身份；角色帖子不需要此字段 */
+    userIdentityId?: string;
+    /** 用户发帖时记录所属世界，用于世界隔离 */
+    worldId?: string;
     content: string;
     photoUrl?: string;              // user-uploaded base64 image
     photoDescription?: string;      // AI-generated photo description (for placeholder rendering)
@@ -24,6 +28,9 @@ export type MomentLike = {
     authorType: "user" | "character" | "npc";
     authorId: string;
     authorName?: string;            // display name for NPC (no characterId)
+    /** 用户点赞/评论的身份和世界归属，用于多世界隔离 */
+    userIdentityId?: string;
+    worldId?: string;
     createdAt: string;
 };
 
@@ -33,6 +40,9 @@ export type MomentComment = {
     authorType: "user" | "character" | "npc";
     authorId: string;
     authorName?: string;            // display name for NPC (no characterId)
+    /** 用户评论的身份和世界归属，用于多世界隔离 */
+    userIdentityId?: string;
+    worldId?: string;
     content: string;
     replyToCommentId?: string;
     replyToAuthorId?: string;       // stored for display convenience ("回复 XXX")
