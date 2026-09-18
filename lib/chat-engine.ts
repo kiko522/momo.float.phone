@@ -484,6 +484,12 @@ function isToolFlowHistoryMessage(message: ChatMessage): boolean {
         || message.mediaType === "memory_write_request";
 }
 
+/** history 末尾是仿真拉黑/解除拉黑系统事件 → 这是角色必须作出反应的戏内事件。 */
+function isBlacklistEventHistoryMessage(message: ChatMessage): boolean {
+    return message.role === "system"
+        && (message.mediaData?.blacklistEvent === "block" || message.mediaData?.blacklistEvent === "unblock");
+}
+
 /** 日志分流：工坊（appId === "qa"）经聊天引擎发出的调用（答疑 Agent 原生工具循环）归工坊环，
  *  其余归底层调用日志环。channel 不能硬编码——工坊的 Agent 循环复用 sendLLMToolStreamRequest，
  *  旧逻辑靠 characterName === "工坊" 分流，改成显式字段后必须从 appId 派生，否则工坊记录漏进主环。 */
@@ -514,6 +520,11 @@ export function appendEmptyGenerateGuardMessage(
     // 明确禁止引用工具结果），同样不追加。
     const lastHistoryMessage = history[history.length - 1];
     if (lastHistoryMessage && (isRealUserHistoryMessage(lastHistoryMessage) || isToolFlowHistoryMessage(lastHistoryMessage))) {
+        return;
+    }
+    // 仿真拉黑事件豁免：末尾是拉黑/解除拉黑事件时，角色必须对此作出反应——
+    // 续写压制提示里的「禁止引用或复述系统消息」会把这次知情反应整个压掉
+    if (lastHistoryMessage && isBlacklistEventHistoryMessage(lastHistoryMessage)) {
         return;
     }
 
@@ -2011,6 +2022,19 @@ export async function buildChatPromptMessages(
     const avatarChangeIntent = !session.isGroup
         ? findUserAvatarChangeIntent(historyForPrompt, session.id, character.id)
         : null;
+    // 仿真拉黑：用户已把角色拉黑——角色知情，知道自己发出的消息会被用户拒收
+    if (!session.isGroup && session.isBlacklisted) {
+        llmMessages.push({
+            role: "system",
+            content: [
+                "【被拉黑状态】用户已经在私聊里把你拉黑了，你清楚地知道这件事，本轮回复必须体现这一点，绝不能当作无事发生。",
+                "你现在发出去的每条消息都会被用户拒收：你的消息会显示红色感叹号和「消息已发出，但被对方拒收了」。消息内容用户其实仍然能看到（它们会正常出现在对话里），但你知道对方拒收了你的消息；聊天记录里你此前带「被对方拒收了」标注的消息就是证据。",
+                "用户发来的消息你依然能正常收到并看到。",
+                "请按你的人设对被拉黑这件事做出真实反应：可以愤怒、质问、伤心、阴阳怪气、连续轰炸式追问，也可以嘴硬装作不在意，或尝试道歉求和——明知消息被拒收仍忍不住继续发，也是一种真实反应。",
+                "除非用户解除拉黑并给出让你信服的理由，不要轻易当无事发生；保持在戏里，不要提及任何系统或仿真设定。",
+            ].join("\n"),
+        });
+    }
     if (avatarChangeIntent) {
         llmMessages.push({
             role: "system",

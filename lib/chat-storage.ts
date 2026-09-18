@@ -5,7 +5,7 @@ import {
     initChatDb,
     dbPutMessage, dbDeleteMessage, dbDeleteMessagesBySession, dbDeleteMessagesByIds,
     dbPutMessages, dbPutSessions, dbPutContacts, dbDeleteSession,
-    dbReplaceContacts, dbReplaceSessions,
+    dbReplaceContacts, dbReplaceSessions, dbBulkPutMessages,
 } from "./chat-db";
 import { resolveUserIdentity } from "./settings-storage";
 import { loadCharacters, saveCharacters } from "./character-storage";
@@ -91,7 +91,7 @@ export type ChatSession = {
     isSpectator?: boolean; // 围观群：用户不在群内，只能生成/线下
 };
 
-export type ChatMessageStatus = "sending" | "sent" | "read" | "failed";
+export type ChatMessageStatus = "sending" | "sent" | "read" | "failed" | "rejected";
 export type ChatMessageRole = "user" | "assistant" | "system" | "tool";
 
 export type StateValue = { name: string; value: number };
@@ -197,6 +197,7 @@ export type ChatMessage = {
         adminActorName?: string;  // 群管理操作执行人显示名
         adminTargetName?: string; // 群管理操作目标显示名
         adminMuteMinutes?: number;// 禁言时长（分钟）
+        blacklistEvent?: "block" | "unblock"; // 仿真拉黑系统事件类型（私聊：用户拉黑/解除拉黑角色）
         musicTitle?: string;      // 音乐标题
         musicArtist?: string;     // 音乐歌手
         xiaohongshuAuthor?: string;       // 小红书分享作者
@@ -1340,6 +1341,17 @@ export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "sta
         newMsg = pluginResult.message;
     }
 
+    // 仿真拉黑（私聊）：用户把角色拉黑后，角色发出去的消息会被用户拒收——
+    // 角色消息标记 rejected（界面上显示仿微信红色感叹号 + 拒收提示）；
+    // 用户自己发的消息正常送达，不带任何标记。统一在这里处理，
+    // 聊天页生成、后台兜底回复、follow-up 等所有落库路径全覆盖。
+    if (newMsg.role === "assistant") {
+        const sessionForBlock = _sessionsCache.find(s => s.id === newMsg.sessionId);
+        if (sessionForBlock && !sessionForBlock.isGroup && sessionForBlock.isBlacklisted) {
+            newMsg.status = "rejected";
+        }
+    }
+
     _messagesCache.push(newMsg);
     dbPutMessage(newMsg);
     resolvePendingAvatarRecommendation(newMsg);
@@ -1403,20 +1415,98 @@ export function upsertImportedChatMessage(msg: ChatMessage): { message: ChatMess
     _messagesCache.push(newMsg);
     dbPutMessage(newMsg);
 
-    const preview = getChatMessagePreview(newMsg);
-    const sessions = loadChatSessions();
-    const sessIdx = sessions.findIndex(s => s.id === newMsg.sessionId);
-    if (sessIdx !== -1 && isSessionPreviewCandidate(newMsg)) {
-        const currentLast = getLastVisibleSessionMessage(newMsg.sessionId);
-        if (!currentLast || currentLast.id === newMsg.id) {
-            sessions[sessIdx].lastMessageId = newMsg.id;
-            if (preview) sessions[sessIdx].lastMessagePreview = preview;
-            sessions[sessIdx].updatedAt = newMsg.createdAt;
-            saveChatSessions(sessions);
+    // 只有真正可能成为「最后一条可见消息」时才做全量预览刷新：
+    // loadChatSessions() 会遍历全部会话并对整张消息缓存排序，逐条导入
+    // （云同步拉取等循环调用）时会退化成 O(条数 × 会话数 × 消息数 log 消息数)。
+    if (isSessionPreviewCandidate(newMsg)) {
+        const preview = getChatMessagePreview(newMsg);
+        const sessions = loadChatSessions();
+        const sessIdx = sessions.findIndex(s => s.id === newMsg.sessionId);
+        if (sessIdx !== -1) {
+            const currentLast = getLastVisibleSessionMessage(newMsg.sessionId);
+            if (!currentLast || currentLast.id === newMsg.id) {
+                sessions[sessIdx].lastMessageId = newMsg.id;
+                if (preview) sessions[sessIdx].lastMessagePreview = preview;
+                sessions[sessIdx].updatedAt = newMsg.createdAt;
+                saveChatSessions(sessions);
+            }
         }
     }
 
     return { message: newMsg, inserted: true };
+}
+
+// 批量导入（聊天记录迁移专用）。旧的逐条 upsert 路径每条消息都会触发
+// loadChatSessions() 的全量预览重算（每个会话都对整张消息缓存做一次
+// filter+sort），并且目标会话 updatedAt 变化会让 sessions 表排队一次
+// clear+bulkPut 事务——几千条记录就能把主线程冻结数分钟、堆积上千个清表
+// 事务，中途任何一次失败/杀进程/配额满都可能把会话表写坏（「导入后数据
+// 被清空、小手机回到初始状态」事故的直接来源）。
+// 这里改为：一次性去重、一次分块等待落库（失败上抛）、最后只刷新一次
+// 受影响会话的预览，不再触碰其余会话。
+export async function bulkUpsertImportedMessages(
+    messages: ChatMessage[],
+): Promise<{ insertedCount: number; skippedCount: number }> {
+    if (messages.length === 0) return { insertedCount: 0, skippedCount: 0 };
+
+    const existingIds = new Set(_messagesCache.map(item => item.id));
+    const nextOrderBySession = new Map<string, number>();
+    const inserted: ChatMessage[] = [];
+    let skippedCount = 0;
+
+    for (const source of messages) {
+        if (existingIds.has(source.id)) {
+            skippedCount += 1;
+            continue;
+        }
+        let order = getStableMessageOrder(source);
+        if (order === null) {
+            const sessionId = source.sessionId || "";
+            const next = nextOrderBySession.get(sessionId) ?? getNextMessageOrder(sessionId);
+            nextOrderBySession.set(sessionId, next + 1);
+            order = next;
+        }
+        const newMsg: ChatMessage = {
+            ...source,
+            status: source.status || "sent",
+            createdAt: source.createdAt || new Date().toISOString(),
+            order,
+        };
+        existingIds.add(newMsg.id);
+        inserted.push(newMsg);
+    }
+
+    if (inserted.length === 0) return { insertedCount: 0, skippedCount };
+
+    // concat 而不是 push(...arr)：超大数组（数万条）展开会触发 RangeError。
+    _messagesCache = _messagesCache.concat(inserted);
+    // 可等待、分块、错误上抛的真实落库；失败时调用方能感知并提示用户，
+    // 而不是内存里「导入成功」、重启后数据消失。
+    await dbBulkPutMessages(inserted);
+
+    // 会话预览 / updatedAt 只在全部落库后统一刷新一次。
+    const affectedSessionIds = new Set(inserted.map(msg => msg.sessionId));
+    const sessions = loadChatSessions();
+    let sessionsChanged = false;
+    for (const sessionId of affectedSessionIds) {
+        const sessIdx = sessions.findIndex(s => s.id === sessionId);
+        if (sessIdx === -1) continue;
+        const currentLast = getLastVisibleSessionMessage(sessionId);
+        if (!currentLast) continue;
+        const preview = getChatMessagePreview(currentLast);
+        if (
+            sessions[sessIdx].lastMessageId === currentLast.id
+            && (sessions[sessIdx].lastMessagePreview || "") === preview
+            && sessions[sessIdx].updatedAt === currentLast.createdAt
+        ) continue;
+        sessions[sessIdx].lastMessageId = currentLast.id;
+        if (preview) sessions[sessIdx].lastMessagePreview = preview;
+        sessions[sessIdx].updatedAt = currentLast.createdAt;
+        sessionsChanged = true;
+    }
+    if (sessionsChanged) saveChatSessions(sessions);
+
+    return { insertedCount: inserted.length, skippedCount };
 }
 
 function removeFirstExactResponsePart(rawResponseText: string, content: string): string {
