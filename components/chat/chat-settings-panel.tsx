@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
     CHAT_INITIAL_VISIBLE_MESSAGE_COUNT,
     CHAT_LOAD_MORE_MESSAGE_COUNT,
-    CHAT_REQUEST_REPLY_EVENT,
     ChatSession,
     clearChatSessionMessages,
     clearChatSessionToolHistory,
@@ -745,23 +744,31 @@ export function ChatSettingsPanel({
         }
     };
 
-    // 仿真拉黑：开关落库 + 记录系统事件（进短期记忆）+ 请求一轮角色知情反应
+    // 仿真拉黑：写成明确的私聊系统事件，直接进入该角色的短期记忆。
+    // 只做本地消息落库，不额外请求 AI。
     const handleToggleBlacklist = (blocked: boolean) => {
         setIsBlacklisted(blocked);
         updateSession({ isBlacklisted: blocked });
+
         const charLabel = character?.name || characterName;
         const userLabel = userIdentity?.name || "用户";
+        const occurredAt = new Date();
+        const padTimePart = (value: number) => String(value).padStart(2, "0");
+        const occurredAtText = `${occurredAt.getFullYear()}-${padTimePart(occurredAt.getMonth() + 1)}-${padTimePart(occurredAt.getDate())} ${padTimePart(occurredAt.getHours())}:${padTimePart(occurredAt.getMinutes())}:${padTimePart(occurredAt.getSeconds())}`;
+        const eventContent = blocked
+            ? `私聊：时间：${occurredAtText}；${userLabel}把${charLabel}私聊拉黑了，${charLabel}发出的消息会被拒收`
+            : `私聊：时间：${occurredAtText}；${userLabel}解除了对${charLabel}的私聊拉黑，${charLabel}发出的消息恢复正常接收`;
+
         pushChatMessage({
             sessionId: session.id,
             role: "system",
-            content: blocked
-                ? `${userLabel}把${charLabel}拉黑了，${charLabel}发出去的消息都会被${userLabel}拒收`
-                : `${userLabel}解除了对${charLabel}的拉黑，${charLabel}的消息恢复正常送达`,
-            // 标记事件类型：提示词组装时豁免「空生成续写压制」，保证角色必须对此事件作出反应
-            mediaData: { blacklistEvent: blocked ? "block" : "unblock" },
+            content: eventContent,
+            mediaData: {
+                blacklistEvent: blocked ? "block" : "unblock",
+                blacklistCharacterName: charLabel,
+                blacklistUserName: userLabel,
+            },
         });
-        // 让角色「知道」并做出反应：走聊天室完整生成管线（聊天页未挂载时由桌面壳兜底）
-        window.dispatchEvent(new CustomEvent(CHAT_REQUEST_REPLY_EVENT, { detail: { sessionId: session.id } }));
     };
 
     const handleClearHistory = () => {

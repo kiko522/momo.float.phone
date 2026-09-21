@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { NativeTimelineEntry } from "@/lib/short-term-assembler";
 import { buildTwoLevelMomentThreads } from "@/lib/moments-comment-threading";
 import { findStickerByName } from "@/lib/sticker-data";
@@ -11,10 +11,10 @@ import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
    ================================================================ */
 
 /** 固定展示顺序：私聊 / 群聊 / 查手机 / 朋友圈 / 剧情 / 其他APP */
-const MEM_TAG_ORDER: readonly string[] = ["私聊", "群聊", "查手机", "朋友圈", "剧情", "其他APP"];
+export const MEMORY_SOURCE_TAG_ORDER: readonly string[] = ["私聊", "群聊", "查手机", "朋友圈", "剧情", "其他APP"];
 
 /** 事件来源 → 筛选标签（其余来源一律归入「其他APP」收纳） */
-function eventSourceTag(evt: NativeTimelineEntry): string {
+export function getMemoryEventSourceTag(evt: NativeTimelineEntry): string {
     const app = evt.sourceApp;
     if (app === "chat") return evt.sourceDetail === "group" ? "群聊" : "私聊";
     if (app === "checkphone") return "查手机";
@@ -615,31 +615,21 @@ function ClusterDetail({ cluster }: { cluster: TimelineCluster }) {
 type Props = {
     events: NativeTimelineEntry[];
     userName: string;
+    activeTags?: ReadonlySet<string>;
 };
+
+const EMPTY_ACTIVE_TAGS: ReadonlySet<string> = new Set<string>();
 
 // 每批渲染的簇数：全部一次性渲染会在重数据账号上把 DOM 撑爆
 const CLUSTER_PAGE_SIZE = 30;
 
-export function MemoryTimeline({ events, userName }: Props) {
+export function MemoryTimeline({ events, userName, activeTags = EMPTY_ACTIVE_TAGS }: Props) {
     const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null);
     const [visibleCount, setVisibleCount] = useState(CLUSTER_PAGE_SIZE);
-    // 标签筛选：空集合 = 全部；选中集合 = 只看这些来源的事件
-    const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
-    const tagBarRef = useRef<HTMLDivElement | null>(null);
-
-    // 顶部标签条：统计各来源条数，按固定顺序输出（私聊/群聊/查手机/朋友圈/剧情/其他APP）
-    const tagCounts = useMemo(() => {
-        const counts = new Map<string, number>();
-        for (const evt of events) {
-            const tag = eventSourceTag(evt);
-            counts.set(tag, (counts.get(tag) || 0) + 1);
-        }
-        return Array.from(counts.entries()).sort((a, b) => MEM_TAG_ORDER.indexOf(a[0]) - MEM_TAG_ORDER.indexOf(b[0]));
-    }, [events]);
 
     const filteredEvents = useMemo(() => {
         if (activeTags.size === 0) return events;
-        return events.filter(evt => activeTags.has(eventSourceTag(evt)));
+        return events.filter(evt => activeTags.has(getMemoryEventSourceTag(evt)));
     }, [events, activeTags]);
 
     const clusters = useMemo(() => {
@@ -656,18 +646,7 @@ export function MemoryTimeline({ events, userName }: Props) {
     useEffect(() => {
         setVisibleCount(CLUSTER_PAGE_SIZE);
         setExpandedClusterId(null);
-        // 换筛选后标签条滚回最左，避免停留在看不见的位置
-        if (tagBarRef.current) tagBarRef.current.scrollLeft = 0;
     }, [activeTags]);
-
-    const toggleTag = (tag: string) => {
-        setActiveTags(prev => {
-            const next = new Set(prev);
-            if (next.has(tag)) next.delete(tag);
-            else next.add(tag);
-            return next;
-        });
-    };
 
     if (events.length === 0) {
         return (
@@ -678,87 +657,60 @@ export function MemoryTimeline({ events, userName }: Props) {
     }
 
     return (
-        <div className="mem-tl-shell">
-            {/* 顶部标签收纳筛选条：与下方记忆卡片同属一张卡片，仅横向可滑 */}
-            {tagCounts.length > 1 && (
-                <div className="mem-tl-tag-bar" ref={tagBarRef} role="group" aria-label="按来源筛选事件">
-                    <button
-                        type="button"
-                        className="mem-tl-tag-chip"
-                        {...(activeTags.size === 0 ? { "data-active": "" } : {})}
-                        onClick={() => setActiveTags(new Set())}
-                    >
-                        全部<span className="mem-tl-tag-count">{events.length}</span>
-                    </button>
-                    {tagCounts.map(([tag, count]) => (
-                        <button
-                            key={tag}
-                            type="button"
-                            className="mem-tl-tag-chip"
-                            {...(activeTags.has(tag) ? { "data-active": "" } : {})}
-                            aria-pressed={activeTags.has(tag)}
-                            onClick={() => toggleTag(tag)}
+        <>
+            {clusters.length === 0 ? (
+                <p className="text-center ts-14 mt-10 text-secondary">
+                    当前筛选条件下暂无事件，换个标签试试。
+                </p>
+            ) : (
+            <div className="mem-tl mem-tl-cards">
+                {clusters.slice(0, visibleCount).map((cluster) => {
+                    const expanded = expandedClusterId === cluster.id;
+                    return (
+                        <div
+                            key={cluster.id}
+                            className={`g-card mem-tl-card${expanded ? " is-expanded" : ""}`}
+                            onClick={() => setExpandedClusterId(expanded ? null : cluster.id)}
                         >
-                            {tag}<span className="mem-tl-tag-count">{count}</span>
-                        </button>
-                    ))}
-                </div>
-            )}
-            <div className="mem-tl-body">
-                {clusters.length === 0 ? (
-                    <p className="text-center ts-14 mt-10 text-secondary">
-                        当前筛选条件下暂无事件，换个标签试试。
-                    </p>
-                ) : (
-                <div className="mem-tl mem-tl-cards">
-                    {clusters.slice(0, visibleCount).map((cluster) => {
-                        const expanded = expandedClusterId === cluster.id;
-                        return (
-                            <div
-                                key={cluster.id}
-                                className={`g-card mem-tl-card${expanded ? " is-expanded" : ""}`}
-                                onClick={() => setExpandedClusterId(expanded ? null : cluster.id)}
-                            >
-                                <span className="ts-10 font-bold uppercase tracking-widest" style={{
-                                    color: "var(--c-danger)", opacity: 0.6, position: "absolute", right: 12, top: 12
-                                }}>REPORT</span>
-                                <div className="flex justify-between items-center pb-2 mb-2" style={{ borderBottom: "1px dashed var(--c-panel-border)" }}>
-                                    <span className="ts-11 text-secondary" style={{ letterSpacing: "1px" }}>[ DATE: {formatClusterDate(cluster)} ]</span>
-                                </div>
-                                <div className="mem-tl-card-head">
-                                    <div className="mem-tl-tags">
-                                        {cluster.tags.map(tag => (
-                                            <span key={tag} className="ui-status-tag" data-variant={tagVariant(tag)}>{tag}</span>
-                                        ))}
-                                    </div>
-                                    <span className="mem-tl-card-count">{cluster.entryCount} 条记录</span>
-                                </div>
-                                {expanded ? (
-                                    <ClusterDetail cluster={cluster} />
-                                ) : (
-                                    <div className="mem-tl-card-excerpts">
-                                        {cluster.excerpts.length > 0 ? cluster.excerpts.map((ex, i) => (
-                                            <p key={i} className="mem-tl-card-ex">{ex}</p>
-                                        )) : (
-                                            <p className="mem-tl-card-ex">暂无可预览内容，展开查看完整记录。</p>
-                                        )}
-                                    </div>
-                                )}
+                            <span className="ts-10 font-bold uppercase tracking-widest" style={{
+                                color: "var(--c-danger)", opacity: 0.6, position: "absolute", right: 12, top: 12
+                            }}>REPORT</span>
+                            <div className="flex justify-between items-center pb-2 mb-2" style={{ borderBottom: "1px dashed var(--c-panel-border)" }}>
+                                <span className="ts-11 text-secondary" style={{ letterSpacing: "1px" }}>[ DATE: {formatClusterDate(cluster)} ]</span>
                             </div>
-                        );
-                    })}
-                </div>
-                )}
-                {clusters.length > visibleCount ? (
-                    <button
-                        type="button"
-                        className="mem-tl-load-more"
-                        onClick={() => setVisibleCount(count => count + CLUSTER_PAGE_SIZE)}
-                    >
-                        加载更早的记录（还有 {clusters.length - visibleCount} 段）
-                    </button>
-                ) : null}
+                            <div className="mem-tl-card-head">
+                                <div className="mem-tl-tags">
+                                    {cluster.tags.map(tag => (
+                                        <span key={tag} className="ui-status-tag" data-variant={tagVariant(tag)}>{tag}</span>
+                                    ))}
+                                </div>
+                                <span className="mem-tl-card-count">{cluster.entryCount} 条记录</span>
+                            </div>
+                            {expanded ? (
+                                <ClusterDetail cluster={cluster} />
+                            ) : (
+                                <div className="mem-tl-card-excerpts">
+                                    {cluster.excerpts.length > 0 ? cluster.excerpts.map((ex, i) => (
+                                        <p key={i} className="mem-tl-card-ex">{ex}</p>
+                                    )) : (
+                                        <p className="mem-tl-card-ex">暂无可预览内容，展开查看完整记录。</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
-        </div>
+            )}
+            {clusters.length > visibleCount ? (
+                <button
+                    type="button"
+                    className="mem-tl-load-more"
+                    onClick={() => setVisibleCount(count => count + CLUSTER_PAGE_SIZE)}
+                >
+                    加载更早的记录（还有 {clusters.length - visibleCount} 段）
+                </button>
+            ) : null}
+        </>
     );
 }
