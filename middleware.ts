@@ -36,6 +36,57 @@ const STATIC_ROUTE_PREFIXES = [
 
 const STATIC_FILE_RE = /\.(?:avif|bin|css|gif|glb|gltf|hdr|ico|jpeg|jpg|js|json|map|mjs|mp3|ogg|otf|png|svg|ttf|txt|wasm|wav|webmanifest|webp|woff|woff2)$/i;
 
+// 站点访问密码（HTTP Basic Auth）：在部署平台设置 SITE_PASSWORD 即开启，
+// 不设置则完全不影响原有行为。SITE_USERNAME 可选，默认 "momo"。
+// 以下路由由 iPhone 快捷指令 / Supabase 云函数调用，没法弹窗输密码，
+// 它们各自用 bridge_token 或一次性票据校验身份，所以放行。
+const SITE_PASSWORD_BYPASS_PREFIXES = [
+  "/shortcut-run/",
+  "/api/push/bridge-wake/",
+  "/api/push/shortcut-commands/result/",
+  "/api/push/shortcut-commands/media/",
+  "/api/push/shortcut-commands/deliver-email/",
+];
+
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+function checkSitePassword(request: NextRequest): NextResponse | null {
+  const password = process.env.SITE_PASSWORD ?? "";
+  if (!password) return null;
+
+  const { pathname } = request.nextUrl;
+  if (SITE_PASSWORD_BYPASS_PREFIXES.some((prefix) => pathname === prefix.slice(0, -1) || pathname.startsWith(prefix))) {
+    return null;
+  }
+
+  const username = process.env.SITE_USERNAME || "momo";
+  const header = request.headers.get("authorization") ?? "";
+  if (header.startsWith("Basic ")) {
+    try {
+      const decoded = atob(header.slice(6));
+      const sep = decoded.indexOf(":");
+      const user = decoded.slice(0, sep);
+      const pass = decoded.slice(sep + 1);
+      if (sep >= 0 && safeEqual(user, username) && safeEqual(pass, password)) return null;
+    } catch {
+      // 格式不对就当作没填，走下面的 401
+    }
+  }
+
+  return new NextResponse("需要访问密码", {
+    status: 401,
+    headers: {
+      "WWW-Authenticate": 'Basic realm="momo", charset="UTF-8"',
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
 function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTE_PREFIXES.some((prefix) => pathname === prefix.slice(0, -1) || pathname.startsWith(prefix));
 }
@@ -57,6 +108,9 @@ function rewriteToHome(request: NextRequest): NextResponse {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  const sitePasswordResponse = checkSitePassword(request);
+  if (sitePasswordResponse) return sitePasswordResponse;
 
   if (isSelfHostedModeEnabled()) {
     return NextResponse.next();
